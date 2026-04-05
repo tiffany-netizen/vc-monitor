@@ -1,0 +1,39 @@
+# .github/workflows/job-scan.yml
+# Mon + Thu: Discovers careers pages and scrapes jobs for approved companies.
+# Only companies with status='approved' in vc_portfolio_companies are scanned.
+
+name: Job Scan (Mon + Thu)
+
+on:
+  schedule:
+    - cron: '0 13 * * 1,4'  # Monday + Thursday at 9am ET (13:00 UTC)
+  workflow_dispatch:
+
+jobs:
+  scan-jobs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests beautifulsoup4 lxml
+
+      - name: Discover careers pages + scan jobs
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python vc_monitor.py --find-careers --scan-jobs --report
+
+      - name: Run job scraper (companies table)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python job_scraper.py --all
