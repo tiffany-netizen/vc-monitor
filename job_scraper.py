@@ -585,41 +585,24 @@ def scrape_jobs(company_id: Optional[int] = None):
             if not salary_qualifies(salary_text):
                 continue
 
-            # Parse salary_min
-            salary_min = None
-            if salary_text:
-                vals = re.findall(r"\$?([\d,]+)[kK]?", salary_text.replace(",", ""))
-                nums = []
-                for v in vals:
-                    n = int(v)
-                    if "k" in salary_text.lower() and n < 10_000:
-                        n *= 1_000
-                    if n >= 10_000:
-                        nums.append(n)
-                salary_min = min(nums) if nums else None
-
             # Check if job URL already exists
             existing = sb_get("jobs", {"url": f"eq.{job_url}", "limit": "1"})
             if existing:
                 sb_patch("jobs", {"url": job_url}, {
                     "last_seen": now,
-                    "active": True,
                 })
             else:
                 sb_insert("jobs", {
+                    "company_id": co.get("id"),
                     "company_name": name,
-                    "rf_company_id": co.get("rf_company_id"),
                     "title": title,
                     "url": job_url,
-                    "location": location,
-                    "salary_text": salary_text,
-                    "salary_min": salary_min,
                     "source": "scraper",
                     "first_seen": now,
                     "last_seen": now,
-                    "active": True,
+                    "status": "new",
                 })
-                log.info(f"  NEW: {title} at {name} [{location}]")
+                log.info(f"  NEW: {title} at {name}")
 
             matches += 1
 
