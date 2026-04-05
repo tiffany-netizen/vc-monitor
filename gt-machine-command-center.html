@@ -1,0 +1,1097 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GT Machine Command Center</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a0e1a; color: #e0e4ec; line-height: 1.5; }
+
+  .app { display: flex; min-height: 100vh; }
+
+  /* Sidebar */
+  .sidebar { width: 260px; background: #111827; border-right: 1px solid #1e293b; padding: 20px 0; flex-shrink: 0; position: fixed; height: 100vh; overflow-y: auto; }
+  .sidebar h1 { font-size: 18px; padding: 0 20px 16px; color: #f1f5f9; border-bottom: 1px solid #1e293b; margin-bottom: 12px; }
+  .sidebar h1 span { color: #60a5fa; }
+  .nav-section { padding: 8px 20px; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #64748b; margin-top: 8px; }
+  .nav-item { padding: 8px 20px; cursor: pointer; font-size: 14px; display: flex; align-items: center; gap: 10px; transition: background 0.15s; }
+  .nav-item:hover { background: #1e293b; }
+  .nav-item.active { background: #1e3a5f; color: #60a5fa; }
+  .nav-item .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .dot.green { background: #22c55e; }
+  .dot.yellow { background: #eab308; }
+  .dot.red { background: #ef4444; }
+  .dot.blue { background: #3b82f6; }
+
+  /* Main */
+  .main { margin-left: 260px; flex: 1; padding: 32px 40px; max-width: 1200px; }
+
+  /* Overview Cards */
+  .stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 32px; }
+  .stat-card { background: #111827; border: 1px solid #1e293b; border-radius: 12px; padding: 20px; }
+  .stat-card .label { font-size: 12px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; }
+  .stat-card .value { font-size: 28px; font-weight: 700; margin-top: 4px; }
+  .stat-card .value.green { color: #22c55e; }
+  .stat-card .value.yellow { color: #eab308; }
+  .stat-card .value.red { color: #ef4444; }
+  .stat-card .value.blue { color: #60a5fa; }
+
+  /* Section */
+  .section { margin-bottom: 40px; }
+  .section h2 { font-size: 22px; margin-bottom: 16px; color: #f1f5f9; }
+  .section h3 { font-size: 16px; margin: 20px 0 10px; color: #94a3b8; }
+
+  /* Scenario Card */
+  .scenario-card { background: #111827; border: 1px solid #1e293b; border-radius: 12px; margin-bottom: 16px; overflow: hidden; }
+  .scenario-header { padding: 20px 24px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
+  .scenario-header:hover { background: #1a2332; }
+  .scenario-title { display: flex; align-items: center; gap: 12px; }
+  .scenario-num { background: #1e293b; color: #94a3b8; font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 6px; }
+  .scenario-name { font-size: 15px; font-weight: 600; color: #e2e8f0; }
+  .status-badge { font-size: 12px; padding: 4px 12px; border-radius: 20px; font-weight: 500; }
+  .status-badge.working { background: #052e16; color: #4ade80; border: 1px solid #166534; }
+  .status-badge.partial { background: #422006; color: #fbbf24; border: 1px solid #854d0e; }
+  .status-badge.not-started { background: #2a0a0a; color: #f87171; border: 1px solid #991b1b; }
+
+  .scenario-body { padding: 0 24px 24px; display: none; border-top: 1px solid #1e293b; }
+  .scenario-body.open { display: block; padding-top: 20px; }
+
+  .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
+  .info-block { background: #0d1424; border-radius: 8px; padding: 16px; }
+  .info-block h4 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: #64748b; margin-bottom: 10px; }
+  .info-block ul { list-style: none; padding: 0; }
+  .info-block li { padding: 4px 0; font-size: 13px; color: #cbd5e1; display: flex; align-items: flex-start; gap: 8px; }
+  .info-block li::before { content: ''; width: 4px; height: 4px; background: #475569; border-radius: 50%; margin-top: 7px; flex-shrink: 0; }
+
+  .tool-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tool-tag { font-size: 11px; padding: 3px 10px; border-radius: 12px; background: #1e293b; color: #94a3b8; }
+  .tool-tag.primary { background: #1e3a5f; color: #60a5fa; }
+
+  /* Steps */
+  .steps-list { margin-top: 16px; }
+  .step { background: #0d1424; border: 1px solid #1e293b; border-radius: 8px; padding: 14px 16px; margin-bottom: 8px; display: flex; align-items: flex-start; gap: 12px; }
+  .step-num { background: #1e3a5f; color: #60a5fa; font-size: 11px; font-weight: 700; width: 24px; height: 24px; border-radius: 6px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 1px; }
+  .step-content { flex: 1; }
+  .step-title { font-size: 13px; font-weight: 600; color: #e2e8f0; }
+  .step-detail { font-size: 12px; color: #94a3b8; margin-top: 4px; }
+  .step-tool { font-size: 11px; color: #60a5fa; margin-top: 4px; }
+
+  /* Data Flow */
+  .flow-diagram { background: #0d1424; border-radius: 12px; padding: 24px; margin: 20px 0; overflow-x: auto; }
+  .flow-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  .flow-node { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 8px 14px; font-size: 12px; color: #e2e8f0; white-space: nowrap; }
+  .flow-node.tool { border-color: #3b82f6; color: #60a5fa; }
+  .flow-node.data { border-color: #22c55e; color: #4ade80; }
+  .flow-node.output { border-color: #a855f7; color: #c084fc; }
+  .flow-arrow { color: #475569; font-size: 16px; }
+
+  /* Architecture view */
+  .arch-layer { background: #111827; border: 1px solid #1e293b; border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+  .arch-layer h3 { font-size: 14px; color: #64748b; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 1px; }
+  .arch-nodes { display: flex; flex-wrap: wrap; gap: 10px; }
+  .arch-node { background: #0d1424; border: 1px solid #334155; border-radius: 8px; padding: 12px 16px; min-width: 140px; }
+  .arch-node .name { font-size: 13px; font-weight: 600; color: #e2e8f0; }
+  .arch-node .role { font-size: 11px; color: #64748b; margin-top: 2px; }
+  .arch-node.highlight { border-color: #3b82f6; }
+  .arch-connector { text-align: center; padding: 8px; color: #475569; font-size: 20px; }
+
+  /* Priority Matrix */
+  .priority-table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+  .priority-table th { text-align: left; padding: 10px 14px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: #64748b; border-bottom: 1px solid #1e293b; }
+  .priority-table td { padding: 10px 14px; font-size: 13px; border-bottom: 1px solid #1e293b; color: #cbd5e1; }
+  .priority-table tr:hover { background: #1a2332; }
+  .priority-num { font-weight: 700; color: #60a5fa; }
+  .effort-tag { font-size: 11px; padding: 2px 8px; border-radius: 10px; }
+  .effort-tag.low { background: #052e16; color: #4ade80; }
+  .effort-tag.med { background: #422006; color: #fbbf24; }
+  .effort-tag.high { background: #2a0a0a; color: #f87171; }
+
+  /* Tabs */
+  .tabs { display: flex; gap: 4px; margin-bottom: 24px; background: #111827; border-radius: 10px; padding: 4px; }
+  .tab { padding: 8px 20px; font-size: 13px; border-radius: 8px; cursor: pointer; color: #94a3b8; transition: all 0.15s; }
+  .tab:hover { color: #e2e8f0; }
+  .tab.active { background: #1e3a5f; color: #60a5fa; }
+
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  /* Chevron */
+  .chevron { transition: transform 0.2s; color: #475569; }
+  .chevron.open { transform: rotate(90deg); }
+
+  /* Gaps section */
+  .gap-card { background: #1a0a0a; border: 1px solid #991b1b; border-radius: 8px; padding: 16px; margin-bottom: 10px; }
+  .gap-card h4 { font-size: 13px; color: #f87171; margin-bottom: 6px; }
+  .gap-card p { font-size: 12px; color: #fca5a5; }
+
+  .fix-card { background: #0a1a0a; border: 1px solid #166534; border-radius: 8px; padding: 16px; margin-bottom: 10px; }
+  .fix-card h4 { font-size: 13px; color: #4ade80; margin-bottom: 6px; }
+  .fix-card p { font-size: 12px; color: #86efac; }
+
+  @media (max-width: 900px) {
+    .sidebar { display: none; }
+    .main { margin-left: 0; padding: 20px; }
+    .stats-row { grid-template-columns: repeat(2, 1fr); }
+    .info-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <nav class="sidebar">
+    <h1>GT <span>Machine</span></h1>
+    <div class="nav-section">Views</div>
+    <div class="nav-item active" onclick="showTab('overview')"><span class="dot blue"></span> System Overview</div>
+    <div class="nav-item" onclick="showTab('architecture')"><span class="dot blue"></span> Architecture Map</div>
+    <div class="nav-item" onclick="showTab('priorities')"><span class="dot blue"></span> Priority Actions</div>
+
+    <div class="nav-section">Scenarios</div>
+    <div class="nav-item" onclick="showTab('scenarios'); toggleScenario(0)"><span class="dot yellow"></span> 1. RF Contact Ingest</div>
+    <div class="nav-item" onclick="showTab('scenarios'); toggleScenario(1)"><span class="dot yellow"></span> 2. Start Workflow</div>
+    <div class="nav-item" onclick="showTab('scenarios'); toggleScenario(2)"><span class="dot yellow"></span> 3. Company Tagging</div>
+    <div class="nav-item" onclick="showTab('scenarios'); toggleScenario(3)"><span class="dot yellow"></span> 4. New Company Added</div>
+    <div class="nav-item" onclick="showTab('scenarios'); toggleScenario(4)"><span class="dot yellow"></span> 5. Daily Digest</div>
+    <div class="nav-item" onclick="showTab('scenarios'); toggleScenario(5)"><span class="dot yellow"></span> 6. Slack Notifications</div>
+    <div class="nav-item" onclick="showTab('scenarios'); toggleScenario(6)"><span class="dot yellow"></span> 7. Monitor Roles</div>
+    <div class="nav-item" onclick="showTab('scenarios'); toggleScenario(7)"><span class="dot red"></span> 8. Auto-Archive</div>
+    <div class="nav-item" onclick="showTab('scenarios'); toggleScenario(8)"><span class="dot red"></span> 9. Job Changes</div>
+    <div class="nav-item" onclick="showTab('scenarios'); toggleScenario(9)"><span class="dot yellow"></span> 10. VC Portco Monitor</div>
+    <div class="nav-item" onclick="showTab('scenarios'); toggleScenario(10)"><span class="dot yellow"></span> 11. OG Hot Jobs</div>
+  </nav>
+
+  <main class="main">
+    <!-- OVERVIEW TAB -->
+    <div class="tab-content active" id="tab-overview">
+      <div class="tabs">
+        <div class="tab active" onclick="showTab('overview')">Overview</div>
+        <div class="tab" onclick="showTab('architecture')">Architecture</div>
+        <div class="tab" onclick="showTab('scenarios')">All Scenarios</div>
+        <div class="tab" onclick="showTab('priorities')">Priority Actions</div>
+      </div>
+
+      <h2 style="margin-bottom:8px;">System Status</h2>
+      <p style="color:#94a3b8; margin-bottom:24px; font-size:14px;">Current state of the GT Machine workflow automation system.</p>
+
+      <div class="stats-row">
+        <div class="stat-card">
+          <div class="label">Total Scenarios</div>
+          <div class="value blue">11</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">Partially Working</div>
+          <div class="value yellow">8</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">Not Started</div>
+          <div class="value red">2</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">Fully Automated</div>
+          <div class="value green">0</div>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>Current Gaps</h2>
+        <div class="gap-card">
+          <h4>No unified data layer</h4>
+          <p>Supabase has some data, Gobii has some, RecruiterFlow has some. No single place to see everything. Bolt UI only sees Supabase.</p>
+        </div>
+        <div class="gap-card">
+          <h4>Manual messaging workflow</h4>
+          <p>You pull data into Claude, write messages manually. No draft-and-send pipeline connected to Gmail.</p>
+        </div>
+        <div class="gap-card">
+          <h4>No job change detection (Scenario 9)</h4>
+          <p>LinkedIn monitoring for job changes isn't set up. Apollo can provide some of this but needs scheduled polling.</p>
+        </div>
+        <div class="gap-card">
+          <h4>No auto-archive logic (Scenario 8)</h4>
+          <p>People who don't match DNA criteria stay in the queue. No rules engine to filter them out.</p>
+        </div>
+        <div class="gap-card">
+          <h4>Digest and Slack alerts are manual (Scenarios 5-6)</h4>
+          <p>Gobii does some of this but you're still doing it yourself. No automated Friday digest or real-time Slack notifications.</p>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>What's Working (Partially)</h2>
+        <div class="fix-card">
+          <h4>Gobii.ai handling Scenarios 1-4, 7</h4>
+          <p>Contact ingestion, enrichment triggers, company tagging, job board scraping. Working but not flowing data into your Bolt UI/Supabase consistently.</p>
+        </div>
+        <div class="fix-card">
+          <h4>Python VC job scraper (Scenario 10)</h4>
+          <p>Scraping VC portfolio company job boards. Outputting to HTML. Needs to feed into Supabase so it shows in your UI.</p>
+        </div>
+        <div class="fix-card">
+          <h4>Bolt UI + Supabase</h4>
+          <p>Frontend exists with some data. Needs to become the single dashboard for all scenarios.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ARCHITECTURE TAB -->
+    <div class="tab-content" id="tab-architecture">
+      <div class="tabs">
+        <div class="tab" onclick="showTab('overview')">Overview</div>
+        <div class="tab active" onclick="showTab('architecture')">Architecture</div>
+        <div class="tab" onclick="showTab('scenarios')">All Scenarios</div>
+        <div class="tab" onclick="showTab('priorities')">Priority Actions</div>
+      </div>
+
+      <h2 style="margin-bottom:20px;">System Architecture</h2>
+
+      <div class="arch-layer">
+        <h3>Layer 1: Data Sources (Where info comes from)</h3>
+        <div class="arch-nodes">
+          <div class="arch-node"><div class="name">RecruiterFlow</div><div class="role">Contact CRM, tiers, tags</div></div>
+          <div class="arch-node"><div class="name">Apollo.io</div><div class="role">Email enrichment, funding data, job changes</div></div>
+          <div class="arch-node"><div class="name">LinkedIn</div><div class="role">Job changes, network posts, profile data</div></div>
+          <div class="arch-node"><div class="name">Gobii.ai</div><div class="role">Job board scraping, company monitoring</div></div>
+          <div class="arch-node"><div class="name">VC Job Boards</div><div class="role">Portfolio company roles (Python scraper)</div></div>
+          <div class="arch-node"><div class="name">OG Forums</div><div class="role">Hot jobs, member activity</div></div>
+        </div>
+      </div>
+
+      <div class="arch-connector">&#8595; &#8595; &#8595;</div>
+
+      <div class="arch-layer">
+        <h3>Layer 2: Automation / Orchestration (What moves data)</h3>
+        <div class="arch-nodes">
+          <div class="arch-node highlight"><div class="name">Make.com</div><div class="role">Primary workflow automation</div></div>
+          <div class="arch-node"><div class="name">Zapier</div><div class="role">Secondary triggers, simple connections</div></div>
+          <div class="arch-node"><div class="name">Python Scripts</div><div class="role">VC portco scraper, custom logic</div></div>
+          <div class="arch-node"><div class="name">Gobii.ai Workflows</div><div class="role">Scraping + monitoring automations</div></div>
+        </div>
+      </div>
+
+      <div class="arch-connector">&#8595; &#8595; &#8595;</div>
+
+      <div class="arch-layer">
+        <h3>Layer 3: Data Store (Single source of truth)</h3>
+        <div class="arch-nodes">
+          <div class="arch-node highlight"><div class="name">Supabase</div><div class="role">Central database: people, companies, jobs, drafts, logs</div></div>
+        </div>
+      </div>
+
+      <div class="arch-connector">&#8595; &#8595; &#8595;</div>
+
+      <div class="arch-layer">
+        <h3>Layer 4: Interface + Output (What you see and do)</h3>
+        <div class="arch-nodes">
+          <div class="arch-node highlight"><div class="name">Bolt UI</div><div class="role">Dashboard: review leads, draft messages, track status</div></div>
+          <div class="arch-node"><div class="name">Gmail</div><div class="role">Send outreach, receive digests</div></div>
+          <div class="arch-node"><div class="name">Slack</div><div class="role">Real-time alerts for hot leads</div></div>
+          <div class="arch-node"><div class="name">Claude</div><div class="role">Message drafting (should be automated via API)</div></div>
+        </div>
+      </div>
+
+      <div class="section" style="margin-top:32px;">
+        <h2>Key Data Flow Paths</h2>
+
+        <h3>Path A: Person enters system</h3>
+        <div class="flow-diagram">
+          <div class="flow-row">
+            <div class="flow-node tool">RecruiterFlow</div>
+            <div class="flow-arrow">&#8594;</div>
+            <div class="flow-node tool">Make.com (poll)</div>
+            <div class="flow-arrow">&#8594;</div>
+            <div class="flow-node data">Supabase: queued_people</div>
+            <div class="flow-arrow">&#8594;</div>
+            <div class="flow-node output">Bolt UI: Review Queue</div>
+          </div>
+        </div>
+
+        <h3>Path B: Person workflow triggered</h3>
+        <div class="flow-diagram">
+          <div class="flow-row">
+            <div class="flow-node output">Bolt UI: "Start Workflow"</div>
+            <div class="flow-arrow">&#8594;</div>
+            <div class="flow-node tool">Make.com (webhook)</div>
+            <div class="flow-arrow">&#8594;</div>
+            <div class="flow-node tool">Apollo (enrich)</div>
+            <div class="flow-arrow">&#8594;</div>
+            <div class="flow-node tool">Gobii (scrape jobs)</div>
+            <div class="flow-arrow">&#8594;</div>
+            <div class="flow-node tool">Claude API (draft)</div>
+            <div class="flow-arrow">&#8594;</div>
+            <div class="flow-node data">Supabase: drafts</div>
+            <div class="flow-arrow">&#8594;</div>
+            <div class="flow-node output">Bolt UI + Gmail</div>
+          </div>
+        </div>
+
+        <h3>Path C: Company monitoring</h3>
+        <div class="flow-diagram">
+          <div class="flow-row">
+            <div class="flow-node tool">Gobii (daily scrape)</div>
+            <div class="flow-arrow">&#8594;</div>
+            <div class="flow-node data">Supabase: jobs</div>
+            <div class="flow-arrow">&#8594;</div>
+            <div class="flow-node tool">Make.com (compare)</div>
+            <div class="flow-arrow">&#8594;</div>
+            <div class="flow-node output">Slack alert</div>
+          </div>
+        </div>
+
+        <h3>Path D: VC portfolio monitoring</h3>
+        <div class="flow-diagram">
+          <div class="flow-row">
+            <div class="flow-node tool">Python Scraper</div>
+            <div class="flow-arrow">&#8594;</div>
+            <div class="flow-node data">Supabase: vc_jobs</div>
+            <div class="flow-arrow">&#8594;</div>
+            <div class="flow-node output">Bolt UI: VC Jobs tab</div>
+          </div>
+          <div class="flow-row" style="margin-top:4px; margin-left:32px; font-size:12px; color:#94a3b8;">
+            Currently: Python &#8594; HTML file. Needs: Python &#8594; Supabase &#8594; Bolt UI
+          </div>
+        </div>
+
+        <h3>Path E: Digest + Notifications</h3>
+        <div class="flow-diagram">
+          <div class="flow-row">
+            <div class="flow-node data">Supabase (aggregate)</div>
+            <div class="flow-arrow">&#8594;</div>
+            <div class="flow-node tool">Make.com (Friday 9AM)</div>
+            <div class="flow-arrow">&#8594;</div>
+            <div class="flow-node tool">Claude API (format)</div>
+            <div class="flow-arrow">&#8594;</div>
+            <div class="flow-node output">Gmail digest</div>
+          </div>
+          <div class="flow-row">
+            <div class="flow-node data">Supabase (trigger)</div>
+            <div class="flow-arrow">&#8594;</div>
+            <div class="flow-node tool">Make.com (realtime)</div>
+            <div class="flow-arrow">&#8594;</div>
+            <div class="flow-node output">Slack channel</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>Supabase Table Structure (Recommended)</h2>
+        <div class="flow-diagram">
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+            <div>
+              <div style="font-size:13px; font-weight:600; color:#4ade80; margin-bottom:8px;">people</div>
+              <div style="font-size:12px; color:#94a3b8; line-height:1.8;">
+                id, name, email, title, company_id, tier (1/2/3/VC/OG), source (RF/Apollo/OG),
+                enriched (bool), email_found (bool), status (queued/active/archived),
+                linkedin_url, last_job_change, warm_intro_path, created_at, updated_at
+              </div>
+            </div>
+            <div>
+              <div style="font-size:13px; font-weight:600; color:#4ade80; margin-bottom:8px;">companies</div>
+              <div style="font-size:12px; color:#94a3b8; line-height:1.8;">
+                id, name, website, jobs_url, tier (1/2/3/Machine/VC), vc_investor,
+                funding_stage, funding_amount, last_funding_date, dna_fit (bool),
+                portfolio_of (vc name), headcount, industry, status (active/archived),
+                last_scraped, created_at
+              </div>
+            </div>
+            <div>
+              <div style="font-size:13px; font-weight:600; color:#60a5fa; margin-bottom:8px;">jobs</div>
+              <div style="font-size:12px; color:#94a3b8; line-height:1.8;">
+                id, company_id, title, url, source (scrape/vc_portco/og_forum),
+                dna_fit (bool), first_seen, last_seen, status (new/active/closed),
+                warm_contact_id (FK to people), vc_source, notified (bool)
+              </div>
+            </div>
+            <div>
+              <div style="font-size:13px; font-weight:600; color:#c084fc; margin-bottom:8px;">drafts</div>
+              <div style="font-size:12px; color:#94a3b8; line-height:1.8;">
+                id, person_id, company_id, job_id, type (outreach/follow_up/og_intro),
+                subject, body, status (draft/reviewed/sent/skipped),
+                sent_at, created_at
+              </div>
+            </div>
+            <div>
+              <div style="font-size:13px; font-weight:600; color:#fbbf24; margin-bottom:8px;">vc_firms</div>
+              <div style="font-size:12px; color:#94a3b8; line-height:1.8;">
+                id, name, contact_name, contact_email, portfolio_url,
+                last_scraped, created_at
+              </div>
+            </div>
+            <div>
+              <div style="font-size:13px; font-weight:600; color:#fbbf24; margin-bottom:8px;">activity_log</div>
+              <div style="font-size:12px; color:#94a3b8; line-height:1.8;">
+                id, type (enrichment/scrape/draft/send/archive/alert),
+                scenario_id, person_id, company_id, details (json), created_at
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SCENARIOS TAB -->
+    <div class="tab-content" id="tab-scenarios">
+      <div class="tabs">
+        <div class="tab" onclick="showTab('overview')">Overview</div>
+        <div class="tab" onclick="showTab('architecture')">Architecture</div>
+        <div class="tab active" onclick="showTab('scenarios')">All Scenarios</div>
+        <div class="tab" onclick="showTab('priorities')">Priority Actions</div>
+      </div>
+
+      <h2 style="margin-bottom:20px;">All Scenarios</h2>
+      <div id="scenarios-list"></div>
+    </div>
+
+    <!-- PRIORITIES TAB -->
+    <div class="tab-content" id="tab-priorities">
+      <div class="tabs">
+        <div class="tab" onclick="showTab('overview')">Overview</div>
+        <div class="tab" onclick="showTab('architecture')">Architecture</div>
+        <div class="tab" onclick="showTab('scenarios')">All Scenarios</div>
+        <div class="tab active" onclick="showTab('priorities')">Priority Actions</div>
+      </div>
+
+      <h2 style="margin-bottom:8px;">Priority Action Plan</h2>
+      <p style="color:#94a3b8; margin-bottom:24px; font-size:14px;">Ordered by impact and dependency. Complete top items first.</p>
+
+      <table class="priority-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Action</th>
+            <th>Scenario</th>
+            <th>Tool</th>
+            <th>Effort</th>
+            <th>Why First</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="priority-num">1</td>
+            <td>Set up Supabase tables (people, companies, jobs, drafts, vc_firms, activity_log)</td>
+            <td>All</td>
+            <td>Supabase</td>
+            <td><span class="effort-tag med">Medium</span></td>
+            <td>Everything else depends on a clean data layer</td>
+          </tr>
+          <tr>
+            <td class="priority-num">2</td>
+            <td>Create Make.com scenario: Poll RecruiterFlow, insert new contacts into Supabase</td>
+            <td>S1</td>
+            <td>Make.com</td>
+            <td><span class="effort-tag low">Low</span></td>
+            <td>Gets contacts flowing into your central database</td>
+          </tr>
+          <tr>
+            <td class="priority-num">3</td>
+            <td>Wire Gobii scrape results into Supabase (API or Make.com)</td>
+            <td>S4, S7</td>
+            <td>Make.com + Gobii</td>
+            <td><span class="effort-tag med">Medium</span></td>
+            <td>Your scraping works but data stays in Gobii instead of your DB</td>
+          </tr>
+          <tr>
+            <td class="priority-num">4</td>
+            <td>Update Python VC scraper to write to Supabase instead of HTML</td>
+            <td>S10</td>
+            <td>Python + Supabase</td>
+            <td><span class="effort-tag low">Low</span></td>
+            <td>Scraper works, just needs a new output destination</td>
+          </tr>
+          <tr>
+            <td class="priority-num">5</td>
+            <td>Build Bolt UI views: People Queue, Company Dashboard, Jobs Feed, VC Jobs, Drafts</td>
+            <td>All</td>
+            <td>Bolt UI</td>
+            <td><span class="effort-tag high">High</span></td>
+            <td>Your command center for reviewing and acting on everything</td>
+          </tr>
+          <tr>
+            <td class="priority-num">6</td>
+            <td>Add "Start Workflow" webhook: Bolt UI button triggers Make.com enrichment flow</td>
+            <td>S2</td>
+            <td>Make.com + Apollo</td>
+            <td><span class="effort-tag med">Medium</span></td>
+            <td>Turns your review queue into an action pipeline</td>
+          </tr>
+          <tr>
+            <td class="priority-num">7</td>
+            <td>Add Claude API call to Make.com for message drafting</td>
+            <td>S2, S11</td>
+            <td>Make.com + Claude API</td>
+            <td><span class="effort-tag med">Medium</span></td>
+            <td>Replaces manual copy/paste into Claude with automated drafts</td>
+          </tr>
+          <tr>
+            <td class="priority-num">8</td>
+            <td>Build Gmail draft creation: Make.com sends drafts to Gmail via API</td>
+            <td>S2, S5</td>
+            <td>Make.com + Gmail</td>
+            <td><span class="effort-tag low">Low</span></td>
+            <td>Drafts appear in Gmail ready for review and send</td>
+          </tr>
+          <tr>
+            <td class="priority-num">9</td>
+            <td>Create Slack webhook: Post to channel when new high-quality job or lead appears</td>
+            <td>S6</td>
+            <td>Make.com + Slack</td>
+            <td><span class="effort-tag low">Low</span></td>
+            <td>Simple webhook, high visibility</td>
+          </tr>
+          <tr>
+            <td class="priority-num">10</td>
+            <td>Build Friday digest: Make.com scheduled scenario pulls weekly summary, emails it</td>
+            <td>S5</td>
+            <td>Make.com + Gmail</td>
+            <td><span class="effort-tag med">Medium</span></td>
+            <td>Depends on data being in Supabase first</td>
+          </tr>
+          <tr>
+            <td class="priority-num">11</td>
+            <td>Add auto-archive rules: Make.com checks enrichment results, archives non-fits</td>
+            <td>S8</td>
+            <td>Make.com + Supabase</td>
+            <td><span class="effort-tag med">Medium</span></td>
+            <td>Keeps your queue clean once data is flowing</td>
+          </tr>
+          <tr>
+            <td class="priority-num">12</td>
+            <td>Set up Apollo job change monitoring: scheduled enrichment checks for title/company changes</td>
+            <td>S9</td>
+            <td>Make.com + Apollo</td>
+            <td><span class="effort-tag med">Medium</span></td>
+            <td>Requires Apollo People Enrichment API; poll weekly for changes</td>
+          </tr>
+          <tr>
+            <td class="priority-num">13</td>
+            <td>OG forum monitoring: scrape or poll for new "hot jobs" posts</td>
+            <td>S11</td>
+            <td>Gobii or Make.com</td>
+            <td><span class="effort-tag med">Medium</span></td>
+            <td>Depends on forum platform; may need Gobii scraper or RSS</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="section" style="margin-top: 40px;">
+        <h2>Step-by-Step: Priority 1 - Supabase Tables</h2>
+        <div class="steps-list">
+          <div class="step">
+            <div class="step-num">1</div>
+            <div class="step-content">
+              <div class="step-title">Open Supabase Dashboard, go to SQL Editor</div>
+              <div class="step-detail">Navigate to your project. Click "SQL Editor" in the left sidebar.</div>
+              <div class="step-tool">Tool: Supabase</div>
+            </div>
+          </div>
+          <div class="step">
+            <div class="step-num">2</div>
+            <div class="step-content">
+              <div class="step-title">Create the "people" table</div>
+              <div class="step-detail">Run CREATE TABLE with columns: id (uuid, primary key, default gen_random_uuid()), name (text), email (text), title (text), company_id (uuid, nullable), tier (text, check in 'Tier 1','Tier 2','Tier 3','VC','OG'), source (text), enriched (boolean default false), email_found (boolean default false), status (text default 'queued'), linkedin_url (text), last_job_change (timestamptz), warm_intro_path (text), rf_id (text for RecruiterFlow ID), created_at (timestamptz default now()), updated_at (timestamptz default now()).</div>
+              <div class="step-tool">Tool: Supabase SQL Editor</div>
+            </div>
+          </div>
+          <div class="step">
+            <div class="step-num">3</div>
+            <div class="step-content">
+              <div class="step-title">Create the "companies" table</div>
+              <div class="step-detail">Columns: id (uuid PK), name (text), website (text), jobs_url (text), tier (text), vc_investor (text), funding_stage (text), funding_amount (text), last_funding_date (date), dna_fit (boolean), portfolio_of (text), headcount (int), industry (text), status (text default 'active'), last_scraped (timestamptz), created_at (timestamptz default now()).</div>
+              <div class="step-tool">Tool: Supabase SQL Editor</div>
+            </div>
+          </div>
+          <div class="step">
+            <div class="step-num">4</div>
+            <div class="step-content">
+              <div class="step-title">Create "jobs", "drafts", "vc_firms", and "activity_log" tables</div>
+              <div class="step-detail">Follow the schema from the Architecture tab. Add foreign keys: jobs.company_id references companies.id, drafts.person_id references people.id, etc.</div>
+              <div class="step-tool">Tool: Supabase SQL Editor</div>
+            </div>
+          </div>
+          <div class="step">
+            <div class="step-num">5</div>
+            <div class="step-content">
+              <div class="step-title">Enable Row Level Security and create API keys</div>
+              <div class="step-detail">In Supabase, go to Authentication > Policies. For your Bolt UI, use the anon key with RLS policies that allow read/write. For Make.com, use the service_role key (keep it secret).</div>
+              <div class="step-tool">Tool: Supabase Dashboard</div>
+            </div>
+          </div>
+          <div class="step">
+            <div class="step-num">6</div>
+            <div class="step-content">
+              <div class="step-title">Seed VC firms data</div>
+              <div class="step-detail">Insert your 35+ VC firms (Greycroft, Point72, Canvas, etc.) into the vc_firms table with their portfolio URLs and contact info.</div>
+              <div class="step-tool">Tool: Supabase SQL Editor</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>Step-by-Step: Priority 2 - RecruiterFlow to Supabase</h2>
+        <div class="steps-list">
+          <div class="step">
+            <div class="step-num">1</div>
+            <div class="step-content">
+              <div class="step-title">Create a new Make.com Scenario</div>
+              <div class="step-detail">Name it "RF Contact Ingest". Set schedule to every 15 minutes (or whatever polling frequency you want).</div>
+              <div class="step-tool">Tool: Make.com</div>
+            </div>
+          </div>
+          <div class="step">
+            <div class="step-num">2</div>
+            <div class="step-content">
+              <div class="step-title">Add HTTP module: GET RecruiterFlow contacts</div>
+              <div class="step-detail">Use RecruiterFlow API (https://api.recruiterflow.com/v1/contacts). Filter by updated_since parameter using the last run timestamp. Add your RF API key in the header.</div>
+              <div class="step-tool">Tool: Make.com HTTP module</div>
+            </div>
+          </div>
+          <div class="step">
+            <div class="step-num">3</div>
+            <div class="step-content">
+              <div class="step-title">Add Filter: Only contacts tagged Tier 1, Tier 2, Tier 3, VC, or OG</div>
+              <div class="step-detail">After the HTTP call, add a Filter module. Check if the contact's tags array contains any of your target tags.</div>
+              <div class="step-tool">Tool: Make.com Filter</div>
+            </div>
+          </div>
+          <div class="step">
+            <div class="step-num">4</div>
+            <div class="step-content">
+              <div class="step-title">Add Supabase module: Upsert into "people"</div>
+              <div class="step-detail">Use Make.com's Supabase integration (or HTTP module with Supabase REST API). Map RF fields to your people table columns. Use rf_id as the conflict key so duplicates update instead of creating new rows.</div>
+              <div class="step-tool">Tool: Make.com + Supabase</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>Step-by-Step: Priority 7 - Claude API for Message Drafting</h2>
+        <div class="steps-list">
+          <div class="step">
+            <div class="step-num">1</div>
+            <div class="step-content">
+              <div class="step-title">Get an Anthropic API key</div>
+              <div class="step-detail">Go to console.anthropic.com, create an API key. Store it as a Make.com connection or variable.</div>
+              <div class="step-tool">Tool: Anthropic Console</div>
+            </div>
+          </div>
+          <div class="step">
+            <div class="step-num">2</div>
+            <div class="step-content">
+              <div class="step-title">Add HTTP module in your Make.com enrichment flow</div>
+              <div class="step-detail">After Apollo enrichment and job scraping, add an HTTP POST to https://api.anthropic.com/v1/messages. Headers: x-api-key, anthropic-version, content-type.</div>
+              <div class="step-tool">Tool: Make.com HTTP module</div>
+            </div>
+          </div>
+          <div class="step">
+            <div class="step-num">3</div>
+            <div class="step-content">
+              <div class="step-title">Build the prompt template</div>
+              <div class="step-detail">In the HTTP body, pass a system prompt with Jamie's voice/style examples and the outreach templates from your doc (like the OG intro email). Pass the person's data, company info, and relevant jobs as the user message. Ask Claude to draft the email.</div>
+              <div class="step-tool">Tool: Make.com HTTP module body</div>
+            </div>
+          </div>
+          <div class="step">
+            <div class="step-num">4</div>
+            <div class="step-content">
+              <div class="step-title">Parse response and save to Supabase drafts table</div>
+              <div class="step-detail">Extract the message content from Claude's response. Insert into Supabase drafts table with person_id, company_id, job_id, subject, body, status='draft'.</div>
+              <div class="step-tool">Tool: Make.com + Supabase</div>
+            </div>
+          </div>
+          <div class="step">
+            <div class="step-num">5</div>
+            <div class="step-content">
+              <div class="step-title">Add Gmail draft creation module</div>
+              <div class="step-detail">After saving to Supabase, add a Gmail module that creates a draft (not sends) with the generated subject and body. To field = the person's email. This way you review in Gmail before hitting send.</div>
+              <div class="step-tool">Tool: Make.com + Gmail</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>Step-by-Step: Priority 4 - Python Scraper to Supabase</h2>
+        <div class="steps-list">
+          <div class="step">
+            <div class="step-num">1</div>
+            <div class="step-content">
+              <div class="step-title">Install supabase-py in your Python environment</div>
+              <div class="step-detail">Run: pip install supabase. Import it in your scraper script.</div>
+              <div class="step-tool">Tool: Python</div>
+            </div>
+          </div>
+          <div class="step">
+            <div class="step-num">2</div>
+            <div class="step-content">
+              <div class="step-title">Add Supabase connection to your scraper</div>
+              <div class="step-detail">At the top of your script: from supabase import create_client. Use your project URL and service_role key. Initialize: supabase = create_client(url, key).</div>
+              <div class="step-tool">Tool: Python</div>
+            </div>
+          </div>
+          <div class="step">
+            <div class="step-num">3</div>
+            <div class="step-content">
+              <div class="step-title">Replace HTML output with Supabase upsert</div>
+              <div class="step-detail">Where your script currently writes to the HTML file, instead call: supabase.table('jobs').upsert({'company_id': company_id, 'title': job_title, 'url': job_url, 'source': 'vc_portco', 'vc_source': vc_name, ...}).execute(). Use the job URL as the unique key to avoid duplicates.</div>
+              <div class="step-tool">Tool: Python + Supabase</div>
+            </div>
+          </div>
+          <div class="step">
+            <div class="step-num">4</div>
+            <div class="step-content">
+              <div class="step-title">Keep HTML output as backup (optional)</div>
+              <div class="step-detail">You can keep the HTML generation as a secondary output while Supabase becomes the primary destination. Just run both.</div>
+              <div class="step-tool">Tool: Python</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>Step-by-Step: Priority 9 - Slack Notifications</h2>
+        <div class="steps-list">
+          <div class="step">
+            <div class="step-num">1</div>
+            <div class="step-content">
+              <div class="step-title">Create a Slack channel for alerts</div>
+              <div class="step-detail">Something like #gt-machine-alerts. Add Tiffany and Jamie.</div>
+              <div class="step-tool">Tool: Slack</div>
+            </div>
+          </div>
+          <div class="step">
+            <div class="step-num">2</div>
+            <div class="step-content">
+              <div class="step-title">Create Slack incoming webhook</div>
+              <div class="step-detail">Go to api.slack.com/apps, create an app (or use existing), add Incoming Webhooks, select your channel. Copy the webhook URL.</div>
+              <div class="step-tool">Tool: Slack API</div>
+            </div>
+          </div>
+          <div class="step">
+            <div class="step-num">3</div>
+            <div class="step-content">
+              <div class="step-title">Add Slack notification step to Make.com scenarios</div>
+              <div class="step-detail">In your job monitoring and enrichment Make.com scenarios, add a final HTTP POST to the Slack webhook URL. Format the message with the company name, job title, warm intro path, and a link to the Bolt UI or job posting.</div>
+              <div class="step-tool">Tool: Make.com + Slack</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>Step-by-Step: Priority 12 - Job Change Detection</h2>
+        <div class="steps-list">
+          <div class="step">
+            <div class="step-num">1</div>
+            <div class="step-content">
+              <div class="step-title">Create Make.com scheduled scenario: "Weekly Job Change Check"</div>
+              <div class="step-detail">Set to run weekly (Sundays or Mondays). This polls Apollo for updated employment data on your tracked contacts.</div>
+              <div class="step-tool">Tool: Make.com</div>
+            </div>
+          </div>
+          <div class="step">
+            <div class="step-num">2</div>
+            <div class="step-content">
+              <div class="step-title">Pull active people from Supabase</div>
+              <div class="step-detail">First module: HTTP GET from Supabase REST API. Filter: status = 'active' AND tier IN ('Tier 1','Tier 2','Tier 3','OG'). This gives you the list of people to check.</div>
+              <div class="step-tool">Tool: Make.com + Supabase</div>
+            </div>
+          </div>
+          <div class="step">
+            <div class="step-num">3</div>
+            <div class="step-content">
+              <div class="step-title">For each person, call Apollo People Enrichment</div>
+              <div class="step-detail">Use Apollo's /v1/people/match endpoint with email or LinkedIn URL. Compare the returned title and company to what's stored in Supabase. If different, that's a job change.</div>
+              <div class="step-tool">Tool: Make.com + Apollo API</div>
+            </div>
+          </div>
+          <div class="step">
+            <div class="step-num">4</div>
+            <div class="step-content">
+              <div class="step-title">On change detected: update Supabase, check DNA fit, route accordingly</div>
+              <div class="step-detail">Update person's title and company_id in Supabase. Check if new company fits DNA (VC-backed, right size, right industry). If yes: keep active, trigger Scenario 2 workflow. If no: set status to 'archived'. Either way, log to activity_log and fire Slack notification.</div>
+              <div class="step-tool">Tool: Make.com + Supabase + Slack</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+const scenarios = [
+  {
+    num: 1, name: "RF Contact Ingest", status: "partial",
+    description: "Jamie adds someone in RecruiterFlow tagged with Tier 1, 2, 3, VC, or OG. Person should appear in the Bolt UI review queue.",
+    currentState: "Gobii is handling some of this. Contacts exist in RecruiterFlow but aren't consistently flowing into Supabase/Bolt UI.",
+    tools: ["RecruiterFlow", "Make.com", "Supabase", "Bolt UI"],
+    primaryTool: "Make.com",
+    dataFlow: ["RecruiterFlow (tagged contact)", "Make.com (poll + filter)", "Supabase (queued_people)", "Bolt UI (review queue)"],
+    gaps: ["No automated polling from RF to Supabase", "Gobii handles it partially but data doesn't land in your central DB"],
+    steps: [
+      "Set up Make.com scenario to poll RecruiterFlow API every 15 min",
+      "Filter for contacts with target tags (Tier 1/2/3, VC, OG)",
+      "Upsert matching contacts into Supabase people table",
+      "Bolt UI reads from Supabase to show the queue"
+    ]
+  },
+  {
+    num: 2, name: "Start Workflow (Person)", status: "partial",
+    description: "Tiffany clicks 'Start Workflow' on a person in the UI. System enriches via Apollo, scrapes job board, drafts email.",
+    currentState: "Gobii does enrichment. Message drafting is manual (copy data into Claude). No automated draft-to-Gmail pipeline.",
+    tools: ["Bolt UI", "Make.com", "Apollo", "Gobii", "Claude API", "Gmail", "Supabase"],
+    primaryTool: "Make.com",
+    dataFlow: ["Bolt UI (click)", "Make.com (webhook)", "Apollo (enrich)", "Gobii (scrape jobs)", "Claude API (draft)", "Supabase (save)", "Gmail (draft)"],
+    gaps: ["Message drafting is manual via Claude chat", "No webhook from Bolt UI to Make.com", "No Gmail draft creation step"],
+    steps: [
+      "Add a webhook URL to Make.com, trigger it from Bolt UI button click",
+      "Make.com calls Apollo People Enrichment with person's email/LinkedIn",
+      "Make.com triggers Gobii to scrape the company's job board (or pull cached results)",
+      "Make.com calls Claude API with enriched data + job matches to generate email draft",
+      "Save draft to Supabase drafts table, create Gmail draft for review"
+    ]
+  },
+  {
+    num: 3, name: "Company Tagging", status: "partial",
+    description: "Tiffany tags a company as Tier 1/2/VC/Machine in the UI. Company enters tracking pipeline.",
+    currentState: "Gobii handles some tagging. Not consistently reflected in Supabase.",
+    tools: ["Bolt UI", "Supabase"],
+    primaryTool: "Supabase",
+    dataFlow: ["Bolt UI (tag)", "Supabase (update company tier)", "Triggers downstream monitoring"],
+    gaps: ["UI tagging may not write directly to Supabase", "No downstream trigger when a company gets tagged"],
+    steps: [
+      "Ensure Bolt UI writes tier updates directly to Supabase companies table",
+      "Add a Supabase database trigger (or Make.com poll) that fires when a company is tagged",
+      "Trigger: kick off job board scraping for newly tagged companies"
+    ]
+  },
+  {
+    num: 4, name: "New Company Added", status: "partial",
+    description: "New company added to RecruiterFlow tagged Machine or VC. Scrape job board, pull VC portfolio, monitor changes.",
+    currentState: "Gobii handles scraping. Results don't always land in Supabase.",
+    tools: ["RecruiterFlow", "Make.com", "Gobii", "Supabase", "Bolt UI"],
+    primaryTool: "Gobii + Make.com",
+    dataFlow: ["RecruiterFlow (new company)", "Make.com (detect)", "Gobii (scrape jobs)", "Supabase (store)", "Bolt UI (display)"],
+    gaps: ["Gobii scrape results stay in Gobii, not in Supabase", "No VC portfolio scraping for VC-tagged companies"],
+    steps: [
+      "Extend the RF polling scenario to also check for new companies",
+      "When a Machine/VC company is detected, insert into Supabase companies table",
+      "Trigger Gobii to scrape job board, store results in Supabase jobs table",
+      "If VC-tagged: also run portfolio company scraper"
+    ]
+  },
+  {
+    num: 5, name: "Daily Digest", status: "partial",
+    description: "Every Friday at 9AM, email Tiffany + Jamie a summary: new leads, drafts sent, new jobs, warm paths, funding events.",
+    currentState: "Gobii partially does this. You're still compiling it manually.",
+    tools: ["Make.com", "Supabase", "Claude API", "Gmail"],
+    primaryTool: "Make.com",
+    dataFlow: ["Make.com (Friday 9AM trigger)", "Supabase (query week's data)", "Claude API (format digest)", "Gmail (send)"],
+    gaps: ["No automated digest generation", "Data isn't all in Supabase yet, so aggregation is incomplete", "No formatting/summary automation"],
+    steps: [
+      "Create Make.com scheduled scenario: Fridays at 9AM",
+      "Query Supabase for the week's activity: new people, jobs found, drafts created/sent, funding events",
+      "Group by category: VC portfolio roles, past client roles, OG member activity, funding events",
+      "Call Claude API to format a clean email digest with warm contact paths labeled",
+      "Send via Gmail to Tiffany + Jamie"
+    ]
+  },
+  {
+    num: 6, name: "Slack Notifications", status: "partial",
+    description: "Real-time Slack alerts for hot leads, new DNA-fit jobs, or relevant LinkedIn posts from Jamie's network.",
+    currentState: "Gobii sometimes sends alerts. Not consistent. LinkedIn monitoring not happening.",
+    tools: ["Make.com", "Supabase", "Slack", "LinkedIn"],
+    primaryTool: "Make.com + Slack",
+    dataFlow: ["Supabase (new record trigger)", "Make.com (format)", "Slack (#gt-machine-alerts)"],
+    gaps: ["No Slack webhook set up", "No trigger for high-quality leads", "LinkedIn post monitoring not implemented"],
+    steps: [
+      "Create Slack channel #gt-machine-alerts",
+      "Set up Slack incoming webhook",
+      "Add Slack notification as the last step in Make.com scenarios (enrichment, job scrape, etc.)",
+      "Format messages with: company, role, warm intro path, link to Bolt UI",
+      "For LinkedIn: explore Gobii or a LinkedIn monitoring service for Jamie's network posts"
+    ]
+  },
+  {
+    num: 7, name: "Monitor Open Roles", status: "partial",
+    description: "Daily scrape of tracked company job boards. Compare to previous results. Notify on changes.",
+    currentState: "Gobii scrapes job boards. Change detection and notification aren't reliable.",
+    tools: ["Gobii", "Make.com", "Supabase", "Slack"],
+    primaryTool: "Gobii + Make.com",
+    dataFlow: ["Make.com (daily trigger)", "Gobii (scrape all tracked companies)", "Supabase (compare + store)", "Slack (alert on new)"],
+    gaps: ["No comparison logic to detect new vs. existing jobs", "No warm intro path tracking alongside jobs"],
+    steps: [
+      "Gobii scrapes daily (keep this running)",
+      "Make.com pulls Gobii results and compares against Supabase jobs table",
+      "New jobs get inserted with status='new'. Closed jobs get status='closed'",
+      "For each new DNA-fit job, check Supabase people table for warm contacts at that company",
+      "Fire Slack notification with job + warm intro path"
+    ]
+  },
+  {
+    num: 8, name: "Auto-Archive", status: "not-started",
+    description: "After enrichment, if no email or no job match or company doesn't fit DNA, archive the person.",
+    currentState: "Not happening. Queue gets cluttered with non-actionable contacts.",
+    tools: ["Make.com", "Supabase"],
+    primaryTool: "Make.com",
+    dataFlow: ["Make.com (after enrichment)", "Check: email found? Job match? DNA fit?", "Supabase (update status to 'archived')"],
+    gaps: ["No archive logic exists", "No DNA fit scoring", "No automatic queue cleanup"],
+    steps: [
+      "After Apollo enrichment step in Make.com, add a Router module",
+      "Branch 1 (actionable): email found AND (company has DNA-fit jobs OR company is VC-backed with right size). Continue to draft generation.",
+      "Branch 2 (not actionable): no email OR company too big OR not VC-funded OR no matching roles. Update Supabase status to 'archived'.",
+      "Define DNA fit criteria in Make.com filters: industry, headcount range, funding stage, VC-backed",
+      "Log the reason for archiving in activity_log table"
+    ]
+  },
+  {
+    num: 9, name: "Job Changes", status: "not-started",
+    description: "Detect when someone in Jamie's network changes roles. Update records. Re-evaluate fit.",
+    currentState: "Not happening at all. No monitoring in place.",
+    tools: ["Make.com", "Apollo", "Supabase", "RecruiterFlow"],
+    primaryTool: "Make.com + Apollo",
+    dataFlow: ["Make.com (weekly schedule)", "Supabase (pull tracked people)", "Apollo (re-enrich)", "Compare title/company", "Supabase (update)", "RecruiterFlow (update)"],
+    gaps: ["No job change detection mechanism", "Apollo can detect changes via re-enrichment but needs scheduled polling", "No RF update step"],
+    steps: [
+      "Create Make.com weekly scenario: 'Job Change Detection'",
+      "Pull all active people from Supabase (Tier 1/2/3, OG)",
+      "For each, call Apollo People Match with their email/LinkedIn",
+      "Compare returned title + company to stored values",
+      "If changed: update Supabase, update RecruiterFlow via API",
+      "If new company fits DNA: keep active, trigger monitoring",
+      "If doesn't fit: set status to 'archived'",
+      "Fire Slack notification for all changes"
+    ]
+  },
+  {
+    num: 10, name: "VC Portco Monitor", status: "partial",
+    description: "Scrape portfolio company job boards for 35+ VC firms. Surface roles that fit your DNA.",
+    currentState: "Python scraper works somewhat, outputs to HTML. Gobii also does some of this. Not unified.",
+    tools: ["Python", "Supabase", "Gobii", "Bolt UI"],
+    primaryTool: "Python + Supabase",
+    dataFlow: ["Python scraper (VC portfolio pages)", "Supabase (vc_firms + jobs tables)", "Bolt UI (VC Jobs view)"],
+    gaps: ["Python outputs to HTML file instead of Supabase", "No DNA fit filtering on scraped jobs", "VC firm list not centralized in Supabase"],
+    steps: [
+      "Add supabase-py to your Python scraper",
+      "Seed vc_firms table with your 35+ VC firms and their portfolio page URLs",
+      "Modify scraper to upsert results into Supabase jobs table with source='vc_portco' and vc_source=firm name",
+      "Add DNA fit filtering: filter by job title keywords that match your recruiting DNA",
+      "Build a 'VC Jobs' view in Bolt UI that queries this data grouped by VC firm"
+    ]
+  },
+  {
+    num: 11, name: "OG Hot Jobs + Events", status: "partial",
+    description: "Monitor OG forums for posted roles. Draft outreach from Jamie. Track OG member job changes and funding.",
+    currentState: "Somewhat in Gobii. Email drafts are manual. No automated OG forum monitoring.",
+    tools: ["Gobii", "Make.com", "Claude API", "Supabase", "Gmail", "Bolt UI"],
+    primaryTool: "Make.com + Claude API",
+    dataFlow: ["OG Forum (new post)", "Gobii or Make.com (detect)", "Supabase (check DNA fit)", "Claude API (draft Jamie's email)", "Gmail (draft)", "Bolt UI (review)"],
+    gaps: ["No automated OG forum monitoring", "Email drafting is manual", "No OG member tracking in Supabase"],
+    steps: [
+      "Determine how to monitor OG forums: Gobii scraper, RSS feed, or email parsing if posts come via email",
+      "When new role posted: insert into Supabase jobs table with source='og_forum'",
+      "Check DNA fit (role type, company size, VC-backed)",
+      "If fit: call Claude API with Jamie's email template + context to draft outreach",
+      "Save draft, create Gmail draft, notify via Slack",
+      "Also track: OG member job changes (feed into Scenario 9), OG company funding (Apollo alerts)"
+    ]
+  }
+];
+
+function renderScenarios() {
+  const container = document.getElementById('scenarios-list');
+  container.innerHTML = scenarios.map((s, i) => `
+    <div class="scenario-card" id="scenario-${i}">
+      <div class="scenario-header" onclick="toggleScenario(${i})">
+        <div class="scenario-title">
+          <span class="scenario-num">S${s.num}</span>
+          <span class="scenario-name">${s.name}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <span class="status-badge ${s.status === 'partial' ? 'partial' : s.status === 'not-started' ? 'not-started' : 'working'}">${s.status === 'partial' ? 'Partial' : s.status === 'not-started' ? 'Not Started' : 'Working'}</span>
+          <span class="chevron" id="chev-${i}">&#9654;</span>
+        </div>
+      </div>
+      <div class="scenario-body" id="body-${i}">
+        <p style="font-size:14px;color:#cbd5e1;margin-bottom:16px;">${s.description}</p>
+
+        <div style="background:#0d1424;border-radius:8px;padding:14px;margin-bottom:16px;">
+          <h4 style="font-size:12px;text-transform:uppercase;letter-spacing:0.5px;color:#eab308;margin-bottom:6px;">Current State</h4>
+          <p style="font-size:13px;color:#fbbf24;">${s.currentState}</p>
+        </div>
+
+        <div class="info-grid">
+          <div class="info-block">
+            <h4>Tools Involved</h4>
+            <div class="tool-tags">
+              ${s.tools.map(t => `<span class="tool-tag ${t === s.primaryTool || s.primaryTool.includes(t) ? 'primary' : ''}">${t}</span>`).join('')}
+            </div>
+          </div>
+          <div class="info-block">
+            <h4>Gaps to Fix</h4>
+            <ul>${s.gaps.map(g => `<li>${g}</li>`).join('')}</ul>
+          </div>
+        </div>
+
+        <h4 style="font-size:12px;text-transform:uppercase;letter-spacing:0.5px;color:#64748b;margin-bottom:8px;">Data Flow</h4>
+        <div class="flow-diagram">
+          <div class="flow-row">
+            ${s.dataFlow.map((d, j) => `<div class="flow-node">${d}</div>${j < s.dataFlow.length - 1 ? '<div class="flow-arrow">&#8594;</div>' : ''}`).join('')}
+          </div>
+        </div>
+
+        <h4 style="font-size:12px;text-transform:uppercase;letter-spacing:0.5px;color:#64748b;margin:16px 0 8px;">Steps to Complete</h4>
+        <div class="steps-list">
+          ${s.steps.map((st, j) => `
+            <div class="step">
+              <div class="step-num">${j+1}</div>
+              <div class="step-content">
+                <div class="step-title">${st}</div>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function toggleScenario(index) {
+  const body = document.getElementById(`body-${index}`);
+  const chev = document.getElementById(`chev-${index}`);
+  const isOpen = body.classList.contains('open');
+
+  // Close all
+  document.querySelectorAll('.scenario-body').forEach(b => b.classList.remove('open'));
+  document.querySelectorAll('.chevron').forEach(c => c.classList.remove('open'));
+
+  if (!isOpen) {
+    body.classList.add('open');
+    chev.classList.add('open');
+  }
+}
+
+function showTab(tabName) {
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  document.getElementById(`tab-${tabName}`).classList.add('active');
+
+  // Update tab buttons
+  document.querySelectorAll('.tabs').forEach(tabBar => {
+    tabBar.querySelectorAll('.tab').forEach(t => {
+      t.classList.remove('active');
+      if (t.textContent.toLowerCase().includes(tabName === 'priorities' ? 'prior' : tabName === 'overview' ? 'over' : tabName === 'architecture' ? 'arch' : 'scen')) {
+        t.classList.add('active');
+      }
+    });
+  });
+
+  // Update sidebar
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+}
+
+renderScenarios();
+</script>
+</body>
+</html>

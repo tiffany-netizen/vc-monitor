@@ -1,0 +1,35 @@
+# Save this file as .github/workflows/vc-monitor.yml in your repo
+
+name: VC Job Monitor
+
+on:
+  schedule:
+    # Runs every Monday at 8am ET (12:00 UTC)
+    - cron: '0 12 * * 1'
+  workflow_dispatch: # Allows manual trigger from GitHub UI
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install requests beautifulsoup4 lxml playwright
+          playwright install chromium
+          playwright install-deps
+
+      - name: Run full pipeline
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python vc_monitor.py --all

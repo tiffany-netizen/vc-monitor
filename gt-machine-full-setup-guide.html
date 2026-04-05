@@ -1,0 +1,2697 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GT Machine - Full Setup Guide</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a0e1a; color: #e0e4ec; line-height: 1.6; }
+
+  .app { display: flex; min-height: 100vh; }
+
+  /* Sidebar */
+  .sidebar { width: 280px; background: #111827; border-right: 1px solid #1e293b; padding: 20px 0; flex-shrink: 0; position: fixed; height: 100vh; overflow-y: auto; }
+  .sidebar h1 { font-size: 16px; padding: 0 20px 16px; color: #f1f5f9; border-bottom: 1px solid #1e293b; margin-bottom: 8px; }
+  .sidebar h1 span { color: #60a5fa; }
+  .nav-section { padding: 10px 20px 4px; font-size: 10px; text-transform: uppercase; letter-spacing: 1.2px; color: #475569; margin-top: 4px; }
+  .nav-item { padding: 7px 20px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 10px; transition: background 0.15s; color: #94a3b8; }
+  .nav-item:hover { background: #1e293b; color: #e2e8f0; }
+  .nav-item.active { background: #1e3a5f; color: #60a5fa; }
+  .nav-item .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .dot.green { background: #22c55e; }
+  .dot.yellow { background: #eab308; }
+  .dot.red { background: #ef4444; }
+  .dot.blue { background: #3b82f6; }
+  .dot.purple { background: #a855f7; }
+  .progress-bar { margin: 12px 20px; background: #1e293b; border-radius: 4px; height: 6px; overflow: hidden; }
+  .progress-fill { height: 100%; background: linear-gradient(90deg, #3b82f6, #60a5fa); border-radius: 4px; transition: width 0.3s; }
+  .progress-label { padding: 0 20px; font-size: 11px; color: #64748b; margin-bottom: 12px; }
+
+  /* Main */
+  .main { margin-left: 280px; flex: 1; padding: 32px 48px; max-width: 960px; }
+
+  /* Scenario Section */
+  .scenario-section { display: none; }
+  .scenario-section.active { display: block; }
+
+  .scenario-header-block { margin-bottom: 32px; }
+  .scenario-label { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: #64748b; margin-bottom: 6px; }
+  .scenario-title { font-size: 26px; font-weight: 700; color: #f1f5f9; margin-bottom: 8px; }
+  .scenario-subtitle { font-size: 14px; color: #94a3b8; margin-bottom: 16px; }
+
+  .status-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+  .status-chip { font-size: 11px; padding: 4px 12px; border-radius: 16px; }
+  .status-chip.partial { background: #422006; color: #fbbf24; }
+  .status-chip.not-started { background: #2a0a0a; color: #f87171; }
+  .status-chip.foundation { background: #1e3a5f; color: #60a5fa; }
+  .tool-chip { font-size: 11px; padding: 4px 10px; border-radius: 12px; background: #1e293b; color: #94a3b8; }
+  .tool-chip.primary { background: #1e3a5f; color: #60a5fa; }
+
+  /* Context Box */
+  .context-box { background: #111827; border: 1px solid #1e293b; border-radius: 10px; padding: 20px; margin-bottom: 28px; }
+  .context-box h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; color: #64748b; margin-bottom: 10px; }
+  .context-box p { font-size: 14px; color: #cbd5e1; }
+  .context-box.warning { border-color: #854d0e; background: #1a1400; }
+  .context-box.warning h3 { color: #eab308; }
+  .context-box.warning p { color: #fbbf24; }
+  .context-box.success { border-color: #166534; background: #0a1a0a; }
+  .context-box.success h3 { color: #22c55e; }
+  .context-box.success p { color: #86efac; }
+
+  /* Data Flow */
+  .flow-box { background: #0d1424; border-radius: 10px; padding: 20px; margin-bottom: 28px; overflow-x: auto; }
+  .flow-box h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; color: #64748b; margin-bottom: 14px; }
+  .flow-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .flow-node { background: #1e293b; border: 1px solid #334155; border-radius: 6px; padding: 6px 12px; font-size: 12px; color: #e2e8f0; white-space: nowrap; }
+  .flow-node.tool { border-color: #3b82f6; color: #60a5fa; }
+  .flow-node.data { border-color: #22c55e; color: #4ade80; }
+  .flow-node.output { border-color: #a855f7; color: #c084fc; }
+  .flow-arrow { color: #475569; font-size: 14px; }
+
+  /* Steps */
+  .steps-container { margin-bottom: 32px; }
+  .steps-container > h2 { font-size: 18px; color: #f1f5f9; margin-bottom: 16px; }
+
+  .step-card { background: #111827; border: 1px solid #1e293b; border-radius: 10px; margin-bottom: 12px; overflow: hidden; }
+  .step-header { padding: 16px 20px; display: flex; align-items: flex-start; gap: 14px; cursor: pointer; }
+  .step-header:hover { background: #1a2332; }
+  .step-num { background: #1e3a5f; color: #60a5fa; font-size: 12px; font-weight: 700; width: 28px; height: 28px; border-radius: 7px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 1px; }
+  .step-num.done { background: #052e16; color: #4ade80; }
+  .step-summary { flex: 1; }
+  .step-summary h4 { font-size: 14px; font-weight: 600; color: #e2e8f0; margin-bottom: 2px; }
+  .step-summary .tool-label { font-size: 11px; color: #60a5fa; }
+  .step-chevron { color: #475569; font-size: 14px; transition: transform 0.2s; margin-top: 4px; }
+  .step-chevron.open { transform: rotate(90deg); }
+
+  .step-detail { display: none; padding: 0 20px 20px 62px; }
+  .step-detail.open { display: block; }
+  .step-detail p { font-size: 13px; color: #94a3b8; margin-bottom: 10px; }
+  .step-detail .substep { background: #0d1424; border-radius: 6px; padding: 12px 14px; margin-bottom: 8px; font-size: 13px; color: #cbd5e1; display: flex; gap: 10px; align-items: flex-start; }
+  .step-detail .substep-num { color: #475569; font-weight: 600; flex-shrink: 0; min-width: 20px; }
+
+  /* Code Block */
+  .code-block { background: #0d1424; border: 1px solid #1e293b; border-radius: 8px; padding: 14px 16px; margin: 10px 0; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; color: #e2e8f0; overflow-x: auto; white-space: pre-wrap; word-break: break-all; line-height: 1.7; }
+  .code-block .comment { color: #6b7280; }
+  .code-block .keyword { color: #60a5fa; }
+  .code-block .string { color: #4ade80; }
+  .code-block .field { color: #fbbf24; }
+
+  /* Prereqs */
+  .prereq-list { margin: 12px 0; }
+  .prereq-item { display: flex; align-items: center; gap: 10px; padding: 8px 0; font-size: 13px; color: #cbd5e1; }
+  .prereq-check { width: 18px; height: 18px; border: 2px solid #334155; border-radius: 4px; flex-shrink: 0; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.15s; }
+  .prereq-check.checked { background: #166534; border-color: #22c55e; }
+  .prereq-check.checked::after { content: '✓'; color: #4ade80; font-size: 12px; font-weight: 700; }
+
+  /* Separator */
+  .section-sep { border: none; border-top: 1px solid #1e293b; margin: 32px 0; }
+
+  /* Tip Box */
+  .tip-box { background: #0d1a2e; border: 1px solid #1e3a5f; border-radius: 8px; padding: 14px 16px; margin: 12px 0; font-size: 13px; color: #93c5fd; }
+  .tip-box strong { color: #60a5fa; }
+
+  /* Checklist for main steps */
+  .step-check { width: 20px; height: 20px; border: 2px solid #334155; border-radius: 5px; flex-shrink: 0; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.15s; }
+  .step-check.checked { background: #166534; border-color: #22c55e; }
+  .step-check.checked::after { content: '✓'; color: #4ade80; font-size: 13px; font-weight: 700; }
+
+  @media (max-width: 900px) {
+    .sidebar { display: none; }
+    .main { margin-left: 0; padding: 20px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <nav class="sidebar">
+    <h1>GT <span>Machine</span> Setup Guide</h1>
+    <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width: 0%"></div></div>
+    <div class="progress-label" id="progressLabel">0 of 12 sections complete</div>
+
+    <div class="nav-section">Foundation</div>
+    <div class="nav-item active" onclick="showSection('s0')"><span class="dot purple"></span> 0. Supabase Setup</div>
+
+    <div class="nav-section">People Pipeline</div>
+    <div class="nav-item" onclick="showSection('s1')"><span class="dot green"></span> 1. RF Contact Ingest</div>
+    <div class="nav-item" onclick="showSection('s2')"><span class="dot yellow"></span> 2. Start Workflow</div>
+    <div class="nav-item" onclick="showSection('s8')"><span class="dot red"></span> 8. Auto-Archive</div>
+    <div class="nav-item" onclick="showSection('s9')"><span class="dot red"></span> 9. Enrichment + Job Changes</div>
+
+    <div class="nav-section">Company Pipeline</div>
+    <div class="nav-item" onclick="showSection('s3')"><span class="dot yellow"></span> 3. Company Tagging</div>
+    <div class="nav-item" onclick="showSection('s4')"><span class="dot yellow"></span> 4. New Company Added</div>
+    <div class="nav-item" onclick="showSection('s7')"><span class="dot yellow"></span> 7. Monitor Open Roles</div>
+    <div class="nav-item" onclick="showSection('s10')"><span class="dot yellow"></span> 10. VC Portco Monitor</div>
+
+    <div class="nav-section">Notifications + OG</div>
+    <div class="nav-item" onclick="showSection('s5')"><span class="dot yellow"></span> 5. Weekly Digest</div>
+    <div class="nav-item" onclick="showSection('s6')"><span class="dot yellow"></span> 6. Slack Notifications</div>
+    <div class="nav-item" onclick="showSection('s11')"><span class="dot yellow"></span> 11. OG Hot Jobs</div>
+  </nav>
+
+  <main class="main">
+
+<!-- ============================================ -->
+<!-- SCENARIO 0: SUPABASE FOUNDATION              -->
+<!-- ============================================ -->
+<div class="scenario-section active" id="s0">
+  <div class="scenario-header-block">
+    <div class="scenario-label">Foundation / Prerequisite</div>
+    <div class="scenario-title">Scenario 0: Supabase Database Setup</div>
+    <div class="scenario-subtitle">Every other scenario depends on this. Set up your central database first.</div>
+    <div class="status-row">
+      <span class="status-chip foundation">Do This First</span>
+      <span class="tool-chip primary">Supabase</span>
+    </div>
+  </div>
+
+  <div class="context-box warning">
+    <h3>Why this comes first</h3>
+    <p>Right now your data lives in Gobii, RecruiterFlow, a Python HTML file, and your head. Nothing talks to each other because there's no shared database. Supabase becomes the single place everything writes to and reads from. Your Bolt UI already connects to it. Once these tables exist, every other scenario has somewhere to put its data.</p>
+  </div>
+
+  <div class="context-box">
+    <h3>Prerequisites</h3>
+    <div class="prereq-list">
+      <div class="prereq-item"><div class="prereq-check" onclick="this.classList.toggle('checked')"></div> Supabase account with a project created</div>
+      <div class="prereq-item"><div class="prereq-check" onclick="this.classList.toggle('checked')"></div> Your Supabase project URL (Settings > API > Project URL)</div>
+      <div class="prereq-item"><div class="prereq-check" onclick="this.classList.toggle('checked')"></div> Your anon key and service_role key (Settings > API > Project API keys)</div>
+    </div>
+  </div>
+
+  <div class="steps-container">
+    <h2>Steps</h2>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">1</div>
+        <div class="step-summary">
+          <h4>Open the Supabase SQL Editor</h4>
+          <div class="tool-label">Supabase Dashboard</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>Log into your Supabase project. In the left sidebar, click "SQL Editor". Click "New query" in the top left. You'll paste each CREATE TABLE statement here and hit "Run".</p>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">2</div>
+        <div class="step-summary">
+          <h4>Create the "companies" table</h4>
+          <div class="tool-label">Supabase SQL Editor</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>Companies comes first because people reference companies via foreign key. Paste this SQL and click Run:</p>
+        <div class="code-block"><span class="keyword">CREATE TABLE</span> companies (
+  id <span class="keyword">UUID PRIMARY KEY DEFAULT</span> gen_random_uuid(),
+  name <span class="keyword">TEXT NOT NULL</span>,
+  website <span class="keyword">TEXT</span>,
+  jobs_url <span class="keyword">TEXT</span>,
+  tier <span class="keyword">TEXT CHECK</span> (tier <span class="keyword">IN</span> (<span class="string">'Tier 1'</span>,<span class="string">'Tier 2'</span>,<span class="string">'Tier 3'</span>,<span class="string">'Machine'</span>,<span class="string">'VC'</span>)),
+  vc_investor <span class="keyword">TEXT</span>,
+  funding_stage <span class="keyword">TEXT</span>,
+  funding_amount <span class="keyword">TEXT</span>,
+  last_funding_date <span class="keyword">DATE</span>,
+  dna_fit <span class="keyword">BOOLEAN DEFAULT</span> <span class="string">false</span>,
+  portfolio_of <span class="keyword">TEXT</span>,
+  headcount <span class="keyword">INTEGER</span>,
+  industry <span class="keyword">TEXT</span>,
+  status <span class="keyword">TEXT DEFAULT</span> <span class="string">'active'</span>,
+  last_scraped <span class="keyword">TIMESTAMPTZ</span>,
+  rf_id <span class="keyword">TEXT</span>,
+  created_at <span class="keyword">TIMESTAMPTZ DEFAULT</span> now(),
+  updated_at <span class="keyword">TIMESTAMPTZ DEFAULT</span> now()
+);</div>
+        <div class="tip-box"><strong>Tip:</strong> The rf_id column stores the RecruiterFlow company ID so you can match records between systems and avoid duplicates.</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">3</div>
+        <div class="step-summary">
+          <h4>Create the "people" table</h4>
+          <div class="tool-label">Supabase SQL Editor</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <div class="code-block"><span class="keyword">CREATE TABLE</span> people (
+  id <span class="keyword">UUID PRIMARY KEY DEFAULT</span> gen_random_uuid(),
+  name <span class="keyword">TEXT NOT NULL</span>,
+  email <span class="keyword">TEXT</span>,
+  title <span class="keyword">TEXT</span>,
+  company_id <span class="keyword">UUID REFERENCES</span> companies(id),
+  company_name <span class="keyword">TEXT</span>,
+  tier <span class="keyword">TEXT CHECK</span> (tier <span class="keyword">IN</span> (<span class="string">'Tier 1'</span>,<span class="string">'Tier 2'</span>,<span class="string">'Tier 3'</span>,<span class="string">'VC'</span>,<span class="string">'OG'</span>)),
+  source <span class="keyword">TEXT DEFAULT</span> <span class="string">'recruiterflow'</span>,
+  enriched <span class="keyword">BOOLEAN DEFAULT</span> <span class="string">false</span>,
+  email_found <span class="keyword">BOOLEAN DEFAULT</span> <span class="string">false</span>,
+  status <span class="keyword">TEXT DEFAULT</span> <span class="string">'queued'</span>,
+  linkedin_url <span class="keyword">TEXT</span>,
+  phone <span class="keyword">TEXT</span>,
+  last_job_change <span class="keyword">TIMESTAMPTZ</span>,
+  previous_title <span class="keyword">TEXT</span>,
+  previous_company <span class="keyword">TEXT</span>,
+  warm_intro_path <span class="keyword">TEXT</span>,
+  archive_reason <span class="keyword">TEXT</span>,
+  rf_id <span class="keyword">TEXT UNIQUE</span>,
+  apollo_id <span class="keyword">TEXT</span>,
+  created_at <span class="keyword">TIMESTAMPTZ DEFAULT</span> now(),
+  updated_at <span class="keyword">TIMESTAMPTZ DEFAULT</span> now()
+);</div>
+        <div class="tip-box"><strong>Key fields:</strong> "status" drives what shows in your UI queue. Values: queued (new, needs review), active (being worked), enriched (Apollo data pulled), drafted (email ready), sent (email sent), archived (not actionable). "previous_title" and "previous_company" let you detect job changes in Scenario 9.</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">4</div>
+        <div class="step-summary">
+          <h4>Create the "vc_firms" table</h4>
+          <div class="tool-label">Supabase SQL Editor</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <div class="code-block"><span class="keyword">CREATE TABLE</span> vc_firms (
+  id <span class="keyword">UUID PRIMARY KEY DEFAULT</span> gen_random_uuid(),
+  name <span class="keyword">TEXT NOT NULL</span>,
+  contact_name <span class="keyword">TEXT</span>,
+  contact_email <span class="keyword">TEXT</span>,
+  portfolio_url <span class="keyword">TEXT</span>,
+  website <span class="keyword">TEXT</span>,
+  last_scraped <span class="keyword">TIMESTAMPTZ</span>,
+  created_at <span class="keyword">TIMESTAMPTZ DEFAULT</span> now()
+);</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">5</div>
+        <div class="step-summary">
+          <h4>Seed the vc_firms table with your 35+ firms</h4>
+          <div class="tool-label">Supabase SQL Editor</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>Insert all your VC firms from the scenario doc. Here's the format (you'll need to fill in portfolio URLs and contact info):</p>
+        <div class="code-block"><span class="keyword">INSERT INTO</span> vc_firms (name, contact_name, portfolio_url) <span class="keyword">VALUES</span>
+(<span class="string">'Greycroft Ventures'</span>, <span class="keyword">NULL</span>, <span class="string">'https://greycroft.com/portfolio'</span>),
+(<span class="string">'Point72 Ventures'</span>, <span class="string">'Chris Jackson'</span>, <span class="string">'https://point72.com/portfolio'</span>),
+(<span class="string">'Canvas Ventures'</span>, <span class="keyword">NULL</span>, <span class="string">'https://canvas.vc/portfolio'</span>),
+(<span class="string">'Upfront Ventures'</span>, <span class="keyword">NULL</span>, <span class="string">'https://upfront.com/portfolio'</span>),
+(<span class="string">'SignalFire'</span>, <span class="keyword">NULL</span>, <span class="string">'https://signalfire.com/portfolio'</span>),
+(<span class="string">'Andreessen Horowitz'</span>, <span class="keyword">NULL</span>, <span class="string">'https://a16z.com/portfolio'</span>),
+(<span class="string">'Redpoint Ventures'</span>, <span class="keyword">NULL</span>, <span class="string">'https://redpoint.com/companies'</span>),
+(<span class="string">'Bain Capital Ventures'</span>, <span class="keyword">NULL</span>, <span class="string">'https://baincapitalventures.com/portfolio'</span>),
+(<span class="string">'Renegade Partners'</span>, <span class="keyword">NULL</span>, <span class="string">'https://www.renegadepartners.com/companies'</span>),
+(<span class="string">'Mayfield'</span>, <span class="keyword">NULL</span>, <span class="string">'https://mayfield.com/portfolio'</span>),
+(<span class="string">'Gradient Ventures'</span>, <span class="keyword">NULL</span>, <span class="string">'https://gradient.com/portfolio'</span>),
+(<span class="string">'Quiet Capital'</span>, <span class="keyword">NULL</span>, <span class="string">'https://quiet.com/portfolio/'</span>),
+(<span class="string">'Scale Venture Partners'</span>, <span class="keyword">NULL</span>, <span class="string">'https://scalevp.com/portfolio'</span>),
+(<span class="string">'The Westley Group'</span>, <span class="keyword">NULL</span>, <span class="string">'https://westlygroup.com/portfolio/'</span>),
+(<span class="string">'Lightspeed Venture Partners'</span>, <span class="keyword">NULL</span>, <span class="string">'https://lsvp.com/portfolio'</span>),
+(<span class="string">'Kindred Ventures'</span>, <span class="keyword">NULL</span>, <span class="string">'https://kindredventures.com/portfolio/'</span>),
+(<span class="string">'Venrock'</span>, <span class="keyword">NULL</span>, <span class="string">'https://venrock.com/portfolio'</span>),
+(<span class="string">'S3 Ventures'</span>, <span class="keyword">NULL</span>, <span class="string">'https://s3vc.com/portfolio'</span>),
+(<span class="string">'Semper Virens'</span>, <span class="keyword">NULL</span>, <span class="string">'https://www.sempervirensvc.com/portfolio'</span>),
+(<span class="string">'Sageview Capital'</span>, <span class="keyword">NULL</span>, <span class="string">'https://www.sageviewcapital.com/portfolio-category/current-investments/'</span>),
+(<span class="string">'Peak XV Partners'</span>, <span class="keyword">NULL</span>, <span class="string">'https://peakxv.com/portfolio'</span>),
+(<span class="string">'Sierra Ventures'</span>, <span class="keyword">NULL</span>, <span class="string">'https://sierraventures.com/portfolio'</span>),
+(<span class="string">'Iconiq Capital'</span>, <span class="keyword">NULL</span>, <span class="string">'https://www.iconiq.com/growth/companies'</span>),
+(<span class="string">'Bessemer Venture Partners'</span>, <span class="keyword">NULL</span>, <span class="string">'https://bvp.com/portfolio'</span>),
+(<span class="string">'Canapi Ventures'</span>, <span class="keyword">NULL</span>, <span class="string">'https://canapi.com/portfolio'</span>),
+(<span class="string">'Menlo Ventures'</span>, <span class="keyword">NULL</span>, <span class="string">'https://menlovc.com/portfolio'</span>),
+(<span class="string">'General Catalyst'</span>, <span class="keyword">NULL</span>, <span class="string">'https://generalcatalyst.com/portfolio'</span>),
+(<span class="string">'Footwork'</span>, <span class="string">'Rachel Coffman'</span>, <span class="string">'https://www.footwork.vc/'</span>),
+(<span class="string">'Off Leash Capital'</span>, <span class="string">'Gina Del Vecchio'</span>, <span class="string">'https://offleash.capital/portfolio'</span>),
+(<span class="string">'Village Global'</span>, <span class="keyword">NULL</span>, <span class="string">'https://villageglobal.vc/portfolio'</span>),
+(<span class="string">'Costanoa Ventures'</span>, <span class="keyword">NULL</span>, <span class="string">'https://costanoavc.com/portfolio'</span>),
+(<span class="string">'Susa Ventures'</span>, <span class="keyword">NULL</span>, <span class="string">'https://susaventures.com/portfolio'</span>),
+(<span class="string">'Ascension Ventures'</span>, <span class="string">'John Kuelper'</span>, <span class="string">'https://ascensionventures.org/our-companies/'</span>),
+(<span class="string">'Greco Ventures'</span>, <span class="string">'Jack Greco'</span>, <span class="string">'https://www.greco.vc/'</span>),
+(<span class="string">'Capital49'</span>, <span class="string">'Chris Cheng'</span>, <span class="string">'https://www.capital49.com/portfolio'</span>),
+(<span class="string">'Virta Ventures'</span>, <span class="string">'Russel Sprole'</span>, <span class="string">'https://www.virtaventures.co/portfolio'</span>),
+(<span class="string">'Joyance Partners'</span>, <span class="string">'Bradley Welch'</span>, <span class="string">'https://www.joyancepartners.com/portfolio'</span>),
+(<span class="string">'Live Oak Venture Partners'</span>, <span class="keyword">NULL</span>, <span class="string">'https://liveoak.vc/portfolio/'</span>),
+(<span class="string">'JMI Equity'</span>, <span class="string">'Matt Cameron'</span>, <span class="string">'https://www.jmi.com/companies/'</span>),
+(<span class="string">'Felicis Ventures'</span>, <span class="string">'Dasha Maggio'</span>, <span class="string">'https://felicis.com/portfolio'</span>),
+(<span class="string">'Underscore VC'</span>, <span class="string">'Brian Devaney'</span>, <span class="string">'https://underscore.vc/portfolio'</span>);</div>
+        <div class="tip-box"><strong>All portfolio URLs included.</strong> Every firm now has a URL for your Python scraper to target. If any URL stops working, update it in this table and the scraper will pick up the change automatically.</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">6</div>
+        <div class="step-summary">
+          <h4>Create the "jobs" table</h4>
+          <div class="tool-label">Supabase SQL Editor</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <div class="code-block"><span class="keyword">CREATE TABLE</span> jobs (
+  id <span class="keyword">UUID PRIMARY KEY DEFAULT</span> gen_random_uuid(),
+  company_id <span class="keyword">UUID REFERENCES</span> companies(id),
+  company_name <span class="keyword">TEXT</span>,
+  title <span class="keyword">TEXT NOT NULL</span>,
+  url <span class="keyword">TEXT</span>,
+  source <span class="keyword">TEXT CHECK</span> (source <span class="keyword">IN</span> (<span class="string">'scrape'</span>,<span class="string">'vc_portco'</span>,<span class="string">'og_forum'</span>,<span class="string">'manual'</span>)),
+  dna_fit <span class="keyword">BOOLEAN DEFAULT</span> <span class="string">false</span>,
+  first_seen <span class="keyword">TIMESTAMPTZ DEFAULT</span> now(),
+  last_seen <span class="keyword">TIMESTAMPTZ DEFAULT</span> now(),
+  status <span class="keyword">TEXT DEFAULT</span> <span class="string">'new'</span>,
+  warm_contact_id <span class="keyword">UUID REFERENCES</span> people(id),
+  warm_contact_name <span class="keyword">TEXT</span>,
+  vc_source <span class="keyword">TEXT</span>,
+  vc_firm_id <span class="keyword">UUID REFERENCES</span> vc_firms(id),
+  notified <span class="keyword">BOOLEAN DEFAULT</span> <span class="string">false</span>,
+  created_at <span class="keyword">TIMESTAMPTZ DEFAULT</span> now()
+);
+
+<span class="comment">-- Index for fast lookups by company and status</span>
+<span class="keyword">CREATE INDEX</span> idx_jobs_company <span class="keyword">ON</span> jobs(company_id);
+<span class="keyword">CREATE INDEX</span> idx_jobs_status <span class="keyword">ON</span> jobs(status);
+<span class="keyword">CREATE INDEX</span> idx_jobs_source <span class="keyword">ON</span> jobs(source);</div>
+        <div class="tip-box"><strong>Key fields:</strong> "source" tells you where the job came from (Gobii scrape, VC portfolio scraper, OG forum post, or manual entry). "warm_contact_id" links to a person you know at that company. "vc_source" stores which VC firm's portfolio the company belongs to.</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">7</div>
+        <div class="step-summary">
+          <h4>Create the "drafts" table</h4>
+          <div class="tool-label">Supabase SQL Editor</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <div class="code-block"><span class="keyword">CREATE TABLE</span> drafts (
+  id <span class="keyword">UUID PRIMARY KEY DEFAULT</span> gen_random_uuid(),
+  person_id <span class="keyword">UUID REFERENCES</span> people(id),
+  company_id <span class="keyword">UUID REFERENCES</span> companies(id),
+  job_id <span class="keyword">UUID REFERENCES</span> jobs(id),
+  type <span class="keyword">TEXT CHECK</span> (type <span class="keyword">IN</span> (<span class="string">'outreach'</span>,<span class="string">'follow_up'</span>,<span class="string">'og_intro'</span>,<span class="string">'job_change'</span>,<span class="string">'funding'</span>)),
+  subject <span class="keyword">TEXT</span>,
+  body <span class="keyword">TEXT</span>,
+  to_email <span class="keyword">TEXT</span>,
+  to_name <span class="keyword">TEXT</span>,
+  status <span class="keyword">TEXT DEFAULT</span> <span class="string">'draft'</span>,
+  gmail_draft_id <span class="keyword">TEXT</span>,
+  sent_at <span class="keyword">TIMESTAMPTZ</span>,
+  skipped_at <span class="keyword">TIMESTAMPTZ</span>,
+  skip_reason <span class="keyword">TEXT</span>,
+  created_at <span class="keyword">TIMESTAMPTZ DEFAULT</span> now()
+);</div>
+        <div class="tip-box"><strong>Status values:</strong> draft (AI generated, needs review), reviewed (you looked at it), sent (email went out), skipped (you decided not to send). The gmail_draft_id field stores the Gmail API draft ID so you can link back to it.</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">8</div>
+        <div class="step-summary">
+          <h4>Create the "activity_log" table</h4>
+          <div class="tool-label">Supabase SQL Editor</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <div class="code-block"><span class="keyword">CREATE TABLE</span> activity_log (
+  id <span class="keyword">UUID PRIMARY KEY DEFAULT</span> gen_random_uuid(),
+  type <span class="keyword">TEXT NOT NULL</span>,
+  scenario <span class="keyword">TEXT</span>,
+  person_id <span class="keyword">UUID REFERENCES</span> people(id),
+  company_id <span class="keyword">UUID REFERENCES</span> companies(id),
+  job_id <span class="keyword">UUID REFERENCES</span> jobs(id),
+  details <span class="keyword">JSONB</span>,
+  created_at <span class="keyword">TIMESTAMPTZ DEFAULT</span> now()
+);
+
+<span class="keyword">CREATE INDEX</span> idx_activity_type <span class="keyword">ON</span> activity_log(type);
+<span class="keyword">CREATE INDEX</span> idx_activity_created <span class="keyword">ON</span> activity_log(created_at);</div>
+        <p>This table logs everything the system does. Types: enrichment, scrape, draft_created, email_sent, archived, job_change, funding_alert, slack_notified. Your weekly digest (Scenario 5) pulls from this table.</p>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">9</div>
+        <div class="step-summary">
+          <h4>Create an "updated_at" auto-update function</h4>
+          <div class="tool-label">Supabase SQL Editor</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>This function automatically sets updated_at whenever a row in people or companies changes. Paste and run:</p>
+        <div class="code-block"><span class="keyword">CREATE OR REPLACE FUNCTION</span> update_updated_at()
+<span class="keyword">RETURNS TRIGGER AS</span> $$
+<span class="keyword">BEGIN</span>
+  NEW.updated_at = now();
+  <span class="keyword">RETURN</span> NEW;
+<span class="keyword">END</span>;
+$$ <span class="keyword">LANGUAGE</span> plpgsql;
+
+<span class="keyword">CREATE TRIGGER</span> people_updated_at
+  <span class="keyword">BEFORE UPDATE ON</span> people
+  <span class="keyword">FOR EACH ROW EXECUTE FUNCTION</span> update_updated_at();
+
+<span class="keyword">CREATE TRIGGER</span> companies_updated_at
+  <span class="keyword">BEFORE UPDATE ON</span> companies
+  <span class="keyword">FOR EACH ROW EXECUTE FUNCTION</span> update_updated_at();</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">10</div>
+        <div class="step-summary">
+          <h4>Set up Row Level Security (RLS)</h4>
+          <div class="tool-label">Supabase Dashboard</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>RLS controls who can read/write your tables. For your setup, you want your Bolt UI (using the anon key) to have full access, and Make.com (using the service_role key) to bypass RLS entirely.</p>
+        <div class="code-block"><span class="comment">-- Enable RLS on all tables</span>
+<span class="keyword">ALTER TABLE</span> people <span class="keyword">ENABLE ROW LEVEL SECURITY</span>;
+<span class="keyword">ALTER TABLE</span> companies <span class="keyword">ENABLE ROW LEVEL SECURITY</span>;
+<span class="keyword">ALTER TABLE</span> jobs <span class="keyword">ENABLE ROW LEVEL SECURITY</span>;
+<span class="keyword">ALTER TABLE</span> drafts <span class="keyword">ENABLE ROW LEVEL SECURITY</span>;
+<span class="keyword">ALTER TABLE</span> vc_firms <span class="keyword">ENABLE ROW LEVEL SECURITY</span>;
+<span class="keyword">ALTER TABLE</span> activity_log <span class="keyword">ENABLE ROW LEVEL SECURITY</span>;
+
+<span class="comment">-- Allow anon key full access (your Bolt UI uses this)</span>
+<span class="keyword">CREATE POLICY</span> <span class="string">"Allow all for anon"</span> <span class="keyword">ON</span> people <span class="keyword">FOR ALL USING</span> (true) <span class="keyword">WITH CHECK</span> (true);
+<span class="keyword">CREATE POLICY</span> <span class="string">"Allow all for anon"</span> <span class="keyword">ON</span> companies <span class="keyword">FOR ALL USING</span> (true) <span class="keyword">WITH CHECK</span> (true);
+<span class="keyword">CREATE POLICY</span> <span class="string">"Allow all for anon"</span> <span class="keyword">ON</span> jobs <span class="keyword">FOR ALL USING</span> (true) <span class="keyword">WITH CHECK</span> (true);
+<span class="keyword">CREATE POLICY</span> <span class="string">"Allow all for anon"</span> <span class="keyword">ON</span> drafts <span class="keyword">FOR ALL USING</span> (true) <span class="keyword">WITH CHECK</span> (true);
+<span class="keyword">CREATE POLICY</span> <span class="string">"Allow all for anon"</span> <span class="keyword">ON</span> vc_firms <span class="keyword">FOR ALL USING</span> (true) <span class="keyword">WITH CHECK</span> (true);
+<span class="keyword">CREATE POLICY</span> <span class="string">"Allow all for anon"</span> <span class="keyword">ON</span> activity_log <span class="keyword">FOR ALL USING</span> (true) <span class="keyword">WITH CHECK</span> (true);</div>
+        <div class="tip-box"><strong>Note:</strong> The service_role key bypasses RLS automatically. Use the service_role key in Make.com and your Python scraper. Use the anon key in your Bolt UI frontend. If you later add authentication to Bolt, you can tighten these policies.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================ -->
+<!-- SCENARIO 1: RF CONTACT INGEST                -->
+<!-- ============================================ -->
+<div class="scenario-section" id="s1">
+  <div class="scenario-header-block">
+    <div class="scenario-label">Scenario 1</div>
+    <div class="scenario-title">RecruiterFlow Contact Ingest</div>
+    <div class="scenario-subtitle">Jamie adds a tagged contact in RecruiterFlow. It automatically shows up in your Bolt UI queue.</div>
+    <div class="status-row">
+      <span class="status-chip" style="background:#052e16;color:#4ade80;">Complete</span>
+      <span class="tool-chip primary">Make.com</span>
+      <span class="tool-chip">RecruiterFlow API</span>
+      <span class="tool-chip">Supabase</span>
+    </div>
+  </div>
+
+  <div class="flow-box">
+    <h3>Data Flow</h3>
+    <div class="flow-row">
+      <div class="flow-node">Jamie tags contact in RF</div>
+      <span class="flow-arrow">&#8594;</span>
+      <div class="flow-node tool">Make.com polls RF API</div>
+      <span class="flow-arrow">&#8594;</span>
+      <div class="flow-node tool">Filter: "Machine" tag (ID 2500)</div>
+      <span class="flow-arrow">&#8594;</span>
+      <div class="flow-node data">Supabase: people table</div>
+      <span class="flow-arrow">&#8594;</span>
+      <div class="flow-node output">Bolt UI: Queue</div>
+    </div>
+  </div>
+
+  <div class="context-box">
+    <h3>Prerequisites</h3>
+    <div class="prereq-list">
+      <div class="prereq-item"><div class="prereq-check" onclick="this.classList.toggle('checked')"></div> Scenario 0 complete (Supabase tables exist)</div>
+      <div class="prereq-item"><div class="prereq-check" onclick="this.classList.toggle('checked')"></div> RecruiterFlow API key (Settings > Integrations > API in RF)</div>
+      <div class="prereq-item"><div class="prereq-check" onclick="this.classList.toggle('checked')"></div> Make.com account with available scenarios</div>
+    </div>
+  </div>
+
+  <div class="steps-container">
+    <h2>Steps</h2>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">1</div>
+        <div class="step-summary">
+          <h4>Create a new Make.com Scenario called "S1 - RF Contact Ingest"</h4>
+          <div class="tool-label">Make.com</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <div class="substep"><span class="substep-num">a.</span> Log into Make.com. Click "Create a new scenario".</div>
+        <div class="substep"><span class="substep-num">b.</span> Name it "S1 - RF Contact Ingest".</div>
+        <div class="substep"><span class="substep-num">c.</span> Set the schedule: click the clock icon at the bottom. Set to run every 15 minutes (or every hour if you want fewer API calls).</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">2</div>
+        <div class="step-summary">
+          <h4>Add the first module: HTTP "Make a request" to poll RecruiterFlow</h4>
+          <div class="tool-label">Make.com > HTTP Module</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>There are two approaches. Option A uses the Search endpoint to pull only tagged contacts (fewer API calls). Option B uses the List endpoint and filters in Make.com. Option A is better.</p>
+
+        <p style="margin-top:12px; font-weight:600; color:#60a5fa;">Option A: Use Contact Search (recommended)</p>
+        <div class="substep"><span class="substep-num">a.</span> Click the "+" to add a module. Search for "HTTP" and select "Make a request".</div>
+        <div class="substep"><span class="substep-num">b.</span> Method: POST</div>
+        <div class="substep"><span class="substep-num">c.</span> URL: https://api.recruiterflow.com/api/external/contact/search</div>
+        <div class="substep"><span class="substep-num">d.</span> Headers: RF-Api-Key = your RecruiterFlow API key, Content-Type = application/json</div>
+        <div class="substep"><span class="substep-num">e.</span> Body: Filter for the "Machine" tag (ID 2500). Any contact that should be synced gets the "Machine" tag in RecruiterFlow first, then this scenario picks it up:</div>
+        <div class="code-block">{
+  "items_per_page": "50",
+  "current_page": "1",
+  "conjunction": "match-any",
+  "filters": [
+    {"filter_type": "multi-select", "conjunction": "in", "key": "tags", "values": [2500]}
+  ]
+}
+
+<span class="comment">// "Machine" tag ID = 2500</span>
+<span class="comment">// Use GET /api/external/tags/list to look up other tag IDs</span>
+<span class="comment">// The search endpoint handles filtering server-side</span>
+<span class="comment">// No Make.com filter needed after the Iterator</span></div>
+
+        <p style="margin-top:12px; font-weight:600; color:#94a3b8;">Option B: Use Contact List (simpler, but pulls all contacts)</p>
+        <div class="substep"><span class="substep-num">a.</span> Method: GET</div>
+        <div class="substep"><span class="substep-num">b.</span> URL: https://api.recruiterflow.com/api/external/contact/list?items_per_page=50&current_page=1&include_count=true</div>
+        <div class="substep"><span class="substep-num">c.</span> Headers: RF-Api-Key = your RecruiterFlow API key</div>
+        <div class="substep"><span class="substep-num">d.</span> This returns all contacts (paginated). You'd then filter by tags in the next step.</div>
+
+        <div class="tip-box"><strong>Important:</strong> The base URL is api.recruiterflow.com (not recruiterflow.com). The response comes back as {"data": [...], "total_items": N}. Your contacts are in the "data" array. Pagination: increase current_page to get the next batch. Run a loop in Make.com if you have more than 50 tagged contacts.</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">3</div>
+        <div class="step-summary">
+          <h4>Add an Iterator module to loop through returned contacts</h4>
+          <div class="tool-label">Make.com > Flow Control > Iterator</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <div class="substep"><span class="substep-num">a.</span> Add a "Flow Control > Iterator" module after the HTTP request.</div>
+        <div class="substep"><span class="substep-num">b.</span> Set the Array field to {{body.data}} from the HTTP module (the "data" array in the response).</div>
+        <div class="substep"><span class="substep-num">c.</span> This processes each contact one at a time through the remaining modules.</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">4</div>
+        <div class="step-summary">
+          <h4>No Make.com filter needed (API handles it)</h4>
+          <div class="tool-label">Make.com > Filter (skip this step)</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>Since the POST search endpoint filters for the "Machine" tag server-side, you don't need a Make.com filter between the Iterator and Supabase. Every contact returned already has the Machine tag.</p>
+        <div class="substep"><span class="substep-num">a.</span> The upsert with on_conflict=rf_id handles deduplication automatically. If a contact already exists, it updates instead of creating a duplicate.</div>
+        <div class="substep"><span class="substep-num">b.</span> If you want to only sync newly added contacts (not re-upsert everyone each run), add a date filter: {"filter_type": "date", "key": "added_on", "conjunction": "gte", "values": ["2026-04-04"]} to the search body. Update the date as needed, or use Make.com's built-in "last run" timestamp.</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">5</div>
+        <div class="step-summary">
+          <h4>Add a Supabase HTTP module: Upsert contact into "people" table</h4>
+          <div class="tool-label">Make.com > HTTP Module > Supabase REST API</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>Make.com doesn't have a native Supabase module, so use an HTTP request to hit Supabase's REST API.</p>
+        <div class="substep"><span class="substep-num">a.</span> Add another HTTP "Make a request" module.</div>
+        <div class="substep"><span class="substep-num">b.</span> Method: POST</div>
+        <div class="substep"><span class="substep-num">c.</span> URL: https://jhreeyesdtnmanolmjqu.supabase.co/rest/v1/people?on_conflict=rf_id</div>
+        <div class="substep"><span class="substep-num">d.</span> Headers (add all four):
+          <br>apikey = your service_role key
+          <br>Authorization = Bearer your_service_role_key
+          <br>Content-Type = application/json
+          <br>Prefer = resolution=merge-duplicates, return=representation</div>
+        <div class="substep"><span class="substep-num">e.</span> Body (JSON):
+        </div>
+        <div class="code-block">{
+  "rf_id": "{{iterator.id}}",
+  "name": "{{iterator.first_name}} {{iterator.last_name}}",
+  "email": "{{iterator.email}}",
+  "title": "{{iterator.title}}",
+  "company_name": "{{iterator.company_name}}",
+  "tier": "{{iterator.tag_that_matched}}",
+  "linkedin_url": "{{iterator.linkedin_url}}",
+  "phone": "{{iterator.phone}}",
+  "source": "recruiterflow",
+  "status": "queued"
+}</div>
+        <div class="substep"><span class="substep-num">f.</span> The "Prefer: resolution=merge-duplicates" header tells Supabase to update the existing row if rf_id already exists (upsert behavior). For this to work, you need a unique constraint on rf_id. Run this SQL in Supabase if you haven't already:</div>
+        <div class="code-block"><span class="keyword">ALTER TABLE</span> people <span class="keyword">ADD CONSTRAINT</span> people_rf_id_unique <span class="keyword">UNIQUE</span> (rf_id);</div>
+        <div class="tip-box"><strong>Field mapping:</strong> The field names inside {{iterator.xxx}} depend on what RecruiterFlow returns. Run the scenario once, look at the HTTP output, and map the actual field names RF uses to your Supabase column names.</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">6</div>
+        <div class="step-summary">
+          <h4>Test the full scenario end-to-end</h4>
+          <div class="tool-label">Make.com + RecruiterFlow + Supabase</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <div class="substep"><span class="substep-num">a.</span> In RecruiterFlow, add or update a test contact and tag them "Tier 1".</div>
+        <div class="substep"><span class="substep-num">b.</span> In Make.com, click "Run once".</div>
+        <div class="substep"><span class="substep-num">c.</span> Watch each module execute. Green = success, red = error.</div>
+        <div class="substep"><span class="substep-num">d.</span> Check Supabase: go to Table Editor > people. You should see the new contact with status "queued".</div>
+        <div class="substep"><span class="substep-num">e.</span> Check Bolt UI: refresh and verify the contact appears in the queue.</div>
+        <div class="substep"><span class="substep-num">f.</span> If everything works, turn on the scenario schedule (toggle at the bottom left of the scenario editor).</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================ -->
+<!-- SCENARIO 2: START WORKFLOW                    -->
+<!-- ============================================ -->
+<div class="scenario-section" id="s2">
+  <div class="scenario-header-block">
+    <div class="scenario-label">Scenario 2</div>
+    <div class="scenario-title">Daily Outreach Workflow</div>
+    <div class="scenario-subtitle">Daily check: fetches DNA-fit jobs, enriches the company via Apollo, finds warm contacts in RecruiterFlow, upserts them into Supabase, searches Jamie's Gmail for existing correspondence, uses Claude to decide whether to draft outreach, and creates Gmail drafts labeled *tv-emails in Jamie's voice. Contact enrichment and job change detection are handled separately in S9.</div>
+    <div class="status-row">
+      <span class="status-chip partial">In Progress</span>
+      <span class="tool-chip primary">Make.com</span>
+      <span class="tool-chip">Apollo API</span>
+      <span class="tool-chip">RecruiterFlow API</span>
+      <span class="tool-chip">Gmail API (jamie@guildtalent.com)</span>
+      <span class="tool-chip">Claude API</span>
+      <span class="tool-chip">Supabase</span>
+    </div>
+  </div>
+
+  <div class="flow-box">
+    <h3>Data Flow - Daily Actionable Outreach</h3>
+    <div class="flow-row">
+      <div class="flow-node tool">1. Supabase: fetch DNA-fit jobs</div>
+      <span class="flow-arrow">&#8594;</span>
+      <div class="flow-node tool">2. Iterator</div>
+      <span class="flow-arrow">&#8594;</span>
+      <div class="flow-node tool">3. Apollo: org enrichment</div>
+      <span class="flow-arrow">&#8594;</span>
+      <div class="flow-node tool">4. RF: contact search by company</div>
+      <span class="flow-arrow">&#8594;</span>
+      <div class="flow-node tool">5. Iterator (RF contacts)</div>
+      <span class="flow-arrow">&#8594;</span>
+      <div class="flow-node data">6. Supabase: upsert contacts</div>
+    </div>
+    <div class="flow-row" style="margin-top:8px;">
+      <div class="flow-node tool">7. Array Aggregator</div>
+      <span class="flow-arrow">&#8594;</span>
+      <div class="flow-node tool">8. Set warm paths variable</div>
+      <span class="flow-arrow">&#8594;</span>
+      <div class="flow-node tool">9. Gmail: company correspondence</div>
+      <span class="flow-arrow">&#8594;</span>
+      <div class="flow-node tool">10. Gmail: tone samples</div>
+      <span class="flow-arrow">&#8594;</span>
+      <div class="flow-node tool">11. Set context variable</div>
+      <span class="flow-arrow">&#8594;</span>
+      <div class="flow-node tool">12. Claude: review + draft</div>
+    </div>
+    <div class="flow-row" style="margin-top:8px;">
+      <div class="flow-node output">13. Filter: action = "draft"</div>
+      <span class="flow-arrow">&#8594;</span>
+      <div class="flow-node output">14. Gmail draft (*tv-emails)</div>
+      <span class="flow-arrow">&#8594;</span>
+      <div class="flow-node data">15. Supabase: update status</div>
+    </div>
+    <h3 style="margin-top:16px;">Data Flow - Re-engage Stale (Weekly)</h3>
+    <div class="flow-row">
+      <div class="flow-node tool">Make.com weekly schedule</div>
+      <span class="flow-arrow">&#8594;</span>
+      <div class="flow-node data">Supabase: 90+ day stale contacts</div>
+      <span class="flow-arrow">&#8594;</span>
+      <div class="flow-node tool">Gmail: confirm no recent threads</div>
+      <span class="flow-arrow">&#8594;</span>
+      <div class="flow-node tool">Claude API: draft re-engagement</div>
+      <span class="flow-arrow">&#8594;</span>
+      <div class="flow-node output">Gmail draft (*tv-emails label)</div>
+    </div>
+  </div>
+
+  <div class="context-box">
+    <h3>Make.com Module Map</h3>
+    <p>This matches the actual scenario layout in Make.com:</p>
+    <p><strong>HTTP (1)</strong> > <strong>Iterator (2)</strong> > <strong>HTTP/Apollo Org (3)</strong> > <strong>HTTP/RF Search (4)</strong> > <strong>Iterator (5)</strong> > <strong>HTTP/Supabase Upsert (6)</strong> > <strong>Array Aggregator (7)</strong> > <strong>Tools/Set Var (8)</strong> > <strong>Gmail (9)</strong> > <strong>Gmail (10)</strong> > <strong>Tools/Set Var (11)</strong> > <strong>Claude (12)</strong> > Filter > Gmail Draft > HTTP (Supabase update)</p>
+  </div>
+
+  <div class="context-box">
+    <h3>Prerequisites</h3>
+    <div class="prereq-list">
+      <div class="prereq-item"><div class="prereq-check checked" onclick="this.classList.toggle('checked')"></div> Scenario 1 complete (contacts in Supabase)</div>
+      <div class="prereq-item"><div class="prereq-check checked" onclick="this.classList.toggle('checked')"></div> Apollo.io API key (Settings > API in Apollo)</div>
+      <div class="prereq-item"><div class="prereq-check checked" onclick="this.classList.toggle('checked')"></div> Anthropic API key (console.anthropic.com)</div>
+      <div class="prereq-item"><div class="prereq-check checked" onclick="this.classList.toggle('checked')"></div> Jamie's Gmail (jamie@guildtalent.com) connected in Make.com via Google OAuth</div>
+      <div class="prereq-item"><div class="prereq-check checked" onclick="this.classList.toggle('checked')"></div> RecruiterFlow API key + credentials saved in Make.com</div>
+      <div class="prereq-item"><div class="prereq-check checked" onclick="this.classList.toggle('checked')"></div> *tv-emails label created in Jamie's Gmail</div>
+      <div class="prereq-item"><div class="prereq-check checked" onclick="this.classList.toggle('checked')"></div> DNA-fit jobs in Supabase jobs table</div>
+      <div class="prereq-item"><div class="prereq-check" onclick="this.classList.toggle('checked')"></div> S9 (Contact Enrichment) run at least once so RF data is current</div>
+    </div>
+  </div>
+
+  <div class="steps-container">
+    <h2>Steps</h2>
+
+    <!-- STEP 1: Supabase fetch -->
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check checked" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num done">1</div>
+        <div class="step-summary">
+          <h4>Module 1: Fetch DNA-fit jobs from Supabase</h4>
+          <div class="tool-label">Make.com > HTTP "Make a request"</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>Pull all jobs flagged as DNA-fit with status "new" so the scenario has something to work with.</p>
+        <div class="substep"><span class="substep-num">a.</span> Method: GET</div>
+        <div class="substep"><span class="substep-num">b.</span> URL:</div>
+        <div class="code-block">https://jhreeyesdtnmanolmjqu.supabase.co/rest/v1/jobs?dna_fit=eq.true&status=eq.new&select=*</div>
+        <div class="substep"><span class="substep-num">c.</span> Headers:</div>
+        <div class="code-block">Authorization: Bearer eyJhbGciOiJIUzI1NiIs...service_role_key
+apikey: eyJhbGciOiJIUzI1NiIs...service_role_key</div>
+        <div class="substep"><span class="substep-num">d.</span> Parse response: Yes</div>
+        <div class="substep"><span class="substep-num">e.</span> Status: DONE. Returns 16 DNA-fit jobs.</div>
+      </div>
+    </div>
+
+    <!-- STEP 2: Iterator -->
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check checked" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num done">2</div>
+        <div class="step-summary">
+          <h4>Module 2: Iterator (loop through each job)</h4>
+          <div class="tool-label">Make.com > Flow Control > Iterator</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <div class="substep"><span class="substep-num">a.</span> Array: Map to the response body from Module 1 (the jobs array).</div>
+        <div class="substep"><span class="substep-num">b.</span> Each iteration gives you one job with: company_name, domain, role_title, job_url, warm_contact_name, etc.</div>
+        <div class="substep"><span class="substep-num">c.</span> Status: DONE. 16 jobs iterate correctly.</div>
+      </div>
+    </div>
+
+    <!-- STEP 3: Apollo Org Enrichment -->
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check checked" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num done">3</div>
+        <div class="step-summary">
+          <h4>Module 3: Apollo Organization Enrichment</h4>
+          <div class="tool-label">Make.com > HTTP "Make a request" > Apollo API</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>For each job, get company context from Apollo: funding, headcount, industry, investors, domain.</p>
+        <div class="substep"><span class="substep-num">a.</span> Method: GET</div>
+        <div class="substep"><span class="substep-num">b.</span> URL:</div>
+        <div class="code-block">https://api.apollo.io/api/v1/organizations/enrich</div>
+        <div class="substep"><span class="substep-num">c.</span> Query string parameter: domain = {{2.domain}} (mapped from Iterator)</div>
+        <div class="substep"><span class="substep-num">d.</span> Headers:</div>
+        <div class="code-block">Content-Type: application/json
+x-api-key: YOUR_APOLLO_API_KEY</div>
+        <div class="substep"><span class="substep-num">e.</span> Parse response: Yes</div>
+        <div class="substep"><span class="substep-num">f.</span> Key fields: organization.name, organization.estimated_num_employees, organization.funding_total, organization.latest_funding_stage, organization.investor_names, organization.industry, organization.primary_domain</div>
+        <div class="substep"><span class="substep-num">g.</span> Status: DONE.</div>
+      </div>
+    </div>
+
+    <!-- STEP 4: RecruiterFlow contact search -->
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check checked" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num done">4</div>
+        <div class="step-summary">
+          <h4>Module 4: RecruiterFlow contact search by company</h4>
+          <div class="tool-label">Make.com > HTTP "Make a request" > RecruiterFlow API</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>Search RecruiterFlow for contacts at this company. Uses the company name from Apollo (Module 3) for accuracy.</p>
+        <div class="substep"><span class="substep-num">a.</span> Method: POST</div>
+        <div class="substep"><span class="substep-num">b.</span> URL:</div>
+        <div class="code-block">https://api.recruiterflow.com/api/external/contact/search</div>
+        <div class="substep"><span class="substep-num">c.</span> Authentication: Use the RF-Api-Key credential saved in Make.com (API key dropdown at top of module).</div>
+        <div class="substep"><span class="substep-num">d.</span> Headers: Content-Type: application/json</div>
+        <div class="substep"><span class="substep-num">e.</span> Body (raw JSON):</div>
+        <div class="code-block">{
+  "conjunction": "match-all",
+  "current_page": 1,
+  "items_per_page": 50,
+  "filters": [
+    {
+      "key": "company",
+      "type": "text",
+      "conjunction": "in",
+      "values": ["{{3.organization.name}}"]
+    }
+  ]
+}</div>
+        <div class="substep"><span class="substep-num">f.</span> Parse response: Yes</div>
+        <div class="substep"><span class="substep-num">g.</span> Returns: data[] array with full contact records including name, email[], current_designation, linkedin_profile, tags, status, last_contacted, id.</div>
+        <div class="substep"><span class="substep-num">h.</span> Status: DONE. Returns contacts at the company (e.g., 3 contacts for NABIS).</div>
+      </div>
+    </div>
+
+    <!-- STEP 5: Iterator for RF contacts -->
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">5</div>
+        <div class="step-summary">
+          <h4>Module 5: Iterator (loop through RF contacts)</h4>
+          <div class="tool-label">Make.com > Flow Control > Iterator</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <div class="substep"><span class="substep-num">a.</span> Array: {{4.data}} (the data array from the RF search response).</div>
+        <div class="substep"><span class="substep-num">b.</span> Each iteration gives you one RF contact: name, email, current_designation, linkedin_profile, id, tags, status, last_contacted.</div>
+        <div class="substep"><span class="substep-num">c.</span> If RF returned 0 contacts for this company, the Iterator produces no iterations and the flow skips to Module 7.</div>
+      </div>
+    </div>
+
+    <!-- STEP 6: Supabase upsert -->
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">6</div>
+        <div class="step-summary">
+          <h4>Module 6: Upsert RF contacts into Supabase</h4>
+          <div class="tool-label">Make.com > HTTP "Make a request" > Supabase</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>Push each RF contact into Supabase so your dashboard stays in sync.</p>
+        <div class="substep"><span class="substep-num">a.</span> Method: POST</div>
+        <div class="substep"><span class="substep-num">b.</span> URL:</div>
+        <div class="code-block">https://jhreeyesdtnmanolmjqu.supabase.co/rest/v1/people?on_conflict=rf_id</div>
+        <div class="substep"><span class="substep-num">c.</span> Headers:</div>
+        <div class="code-block">Authorization: Bearer eyJhbGciOiJIUzI1NiIs...service_role_key
+apikey: eyJhbGciOiJIUzI1NiIs...service_role_key
+Content-Type: application/json
+Prefer: resolution=merge-duplicates,return=representation</div>
+        <div class="substep"><span class="substep-num">d.</span> Body:</div>
+        <div class="code-block">{
+  "rf_id": {{5.id}},
+  "name": "{{5.first_name}} {{5.last_name}}",
+  "email": "{{5.email[1]}}",
+  "title": "{{5.current_designation}}",
+  "company_name": "{{5.client_company_name}}",
+  "linkedin_url": "https://linkedin.com/in/{{5.linkedin_profile}}",
+  "source": "recruiterflow",
+  "status": "enriched"
+}</div>
+        <div class="substep"><span class="substep-num">e.</span> The on_conflict=rf_id parameter prevents duplicates.</div>
+      </div>
+    </div>
+
+    <!-- STEP 7: Array Aggregator -->
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">7</div>
+        <div class="step-summary">
+          <h4>Module 7: Array Aggregator (collect RF contacts back into list)</h4>
+          <div class="tool-label">Make.com > Flow Control > Array Aggregator</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>Collapses the iterated RF contacts back into a single array for the context variable.</p>
+        <div class="substep"><span class="substep-num">a.</span> Source module: Iterator (Module 5)</div>
+        <div class="substep"><span class="substep-num">b.</span> Fields to aggregate: name, current_designation (title), email, linkedin_profile, status, last_contacted</div>
+      </div>
+    </div>
+
+    <!-- STEP 8: Set warm paths variable -->
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">8</div>
+        <div class="step-summary">
+          <h4>Module 8: Set Variable (combine warm paths + company context)</h4>
+          <div class="tool-label">Make.com > Tools > Set Variable</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>Combine Apollo company data and RF contacts into a single warm_context variable.</p>
+        <div class="substep"><span class="substep-num">a.</span> Variable name: warm_context</div>
+        <div class="substep"><span class="substep-num">b.</span> Variable value:</div>
+        <div class="code-block"><span class="comment">// Company context from Apollo (Module 3):</span>
+Company: {{3.organization.name}}
+Funding: {{3.organization.latest_funding_stage}} ({{3.organization.funding_total}})
+Headcount: {{3.organization.estimated_num_employees}}
+Industry: {{3.organization.industry}}
+Investors: {{3.organization.investor_names}}
+
+<span class="comment">// Warm contacts from RecruiterFlow (Module 7 aggregator):</span>
+Known contacts at company: {{7.array}} (name, title, email, last contacted date)</div>
+      </div>
+    </div>
+
+    <!-- STEP 9: Gmail company correspondence -->
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check checked" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num done">9</div>
+        <div class="step-summary">
+          <h4>Module 9: Gmail search for company correspondence</h4>
+          <div class="tool-label">Make.com > Gmail > Search Emails</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>Search Jamie's Gmail for existing emails with this company.</p>
+        <div class="substep"><span class="substep-num">a.</span> Gmail "Search emails" module (connected to jamie@guildtalent.com).</div>
+        <div class="substep"><span class="substep-num">b.</span> Search query: {{3.organization.name}}</div>
+        <div class="substep"><span class="substep-num">c.</span> Max results: 5</div>
+        <div class="substep"><span class="substep-num">d.</span> Note: company name search can catch mass campaigns. Known tradeoff; can refine later to search by specific contact emails.</div>
+        <div class="substep"><span class="substep-num">e.</span> Status: DONE.</div>
+      </div>
+    </div>
+
+    <!-- STEP 10: Gmail tone samples -->
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check checked" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num done">10</div>
+        <div class="step-summary">
+          <h4>Module 10: Gmail search for Jamie's tone samples</h4>
+          <div class="tool-label">Make.com > Gmail > Search Emails</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>Pull recent sent emails from Jamie so Claude can match his voice.</p>
+        <div class="substep"><span class="substep-num">a.</span> Gmail "Search emails" module.</div>
+        <div class="substep"><span class="substep-num">b.</span> Search query: from:jamie@guildtalent.com in:sent</div>
+        <div class="substep"><span class="substep-num">c.</span> Max results: 10</div>
+        <div class="substep"><span class="substep-num">d.</span> Can cache in a Make.com data store to avoid re-fetching every run.</div>
+        <div class="substep"><span class="substep-num">e.</span> Status: DONE.</div>
+      </div>
+    </div>
+
+    <!-- STEP 11: Set context variable -->
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">11</div>
+        <div class="step-summary">
+          <h4>Module 11: Set Variable (bundle all context for Claude)</h4>
+          <div class="tool-label">Make.com > Tools > Set Variable</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>Combine everything into one variable for Claude.</p>
+        <div class="substep"><span class="substep-num">a.</span> Variable name: claude_context</div>
+        <div class="substep"><span class="substep-num">b.</span> Variable value: Concatenate warm_context (Module 8) + Gmail correspondence (Module 9) + Jamie's tone samples (Module 10) + job details from Iterator (Module 2).</div>
+      </div>
+    </div>
+
+    <!-- STEP 12: Claude -->
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check checked" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num done">12</div>
+        <div class="step-summary">
+          <h4>Module 12: Claude API (review context + draft email)</h4>
+          <div class="tool-label">Make.com > Anthropic Claude > Create a Prompt</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>Claude reviews everything and decides: draft an email, skip, or flag for review.</p>
+        <div class="substep"><span class="substep-num">a.</span> Module: Anthropic Claude > "Create a Prompt"</div>
+        <div class="substep"><span class="substep-num">b.</span> Model: claude-sonnet-4-20250514</div>
+        <div class="substep"><span class="substep-num">c.</span> Messages: Role = User, Input Type = Text</div>
+        <div class="substep"><span class="substep-num">d.</span> User message: Full context from Module 11 (claude_context variable).</div>
+        <div class="substep"><span class="substep-num">e.</span> System prompt (in Advanced Settings):</div>
+        <div class="code-block">You are an email assistant for Jamie Ceglarz, a recruiter at Guild Talent. Jamie is pitching his recruiting services to companies that are hiring. You will receive company data, warm contact info, existing correspondence, and tone samples.
+
+Your job:
+1. Review all context provided.
+2. Decide whether Jamie should reach out. If there's already recent correspondence about this role, say "skip."
+3. If yes, draft an email in Jamie's voice referencing the trigger event, any warm connections, and company context.
+4. Format your response as JSON:
+{
+  "action": "draft" or "skip",
+  "reason": "why",
+  "subject": "email subject",
+  "body": "email body",
+  "to_name": "recipient name",
+  "to_email": "recipient email"
+}
+
+Rules:
+- Match Jamie's tone from the samples. Don't make it more formal.
+- Keep it short (3-5 sentences).
+- If you have warm contacts, mention the connection naturally.
+- Reference the specific trigger (job posting, funding, etc).
+- End with a low-pressure ask.</div>
+        <div class="substep"><span class="substep-num">f.</span> Status: DONE. Claude returns JSON with action, subject, body, etc.</div>
+      </div>
+    </div>
+
+    <!-- STEP 13: Filter -->
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">13</div>
+        <div class="step-summary">
+          <h4>Filter: only proceed if Claude said "draft"</h4>
+          <div class="tool-label">Make.com > Filter (between Claude and Gmail)</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <div class="substep"><span class="substep-num">a.</span> Condition: Claude's response contains "action": "draft".</div>
+        <div class="substep"><span class="substep-num">b.</span> If "skip", the flow stops here for this iteration.</div>
+      </div>
+    </div>
+
+    <!-- STEP 14: Gmail draft -->
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">14</div>
+        <div class="step-summary">
+          <h4>Create Gmail draft with *tv-emails label</h4>
+          <div class="tool-label">Make.com > Gmail > Create a Draft</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <div class="substep"><span class="substep-num">a.</span> Gmail "Create a Draft" module (connected to jamie@guildtalent.com).</div>
+        <div class="substep"><span class="substep-num">b.</span> To: Map from Claude's JSON (to_email).</div>
+        <div class="substep"><span class="substep-num">c.</span> Subject: Map from Claude's JSON (subject).</div>
+        <div class="substep"><span class="substep-num">d.</span> Content: Map from Claude's JSON (body).</div>
+        <div class="substep"><span class="substep-num">e.</span> Labels: *tv-emails.</div>
+        <div class="substep"><span class="substep-num">f.</span> Draft stays as draft. Jamie reviews and sends manually.</div>
+      </div>
+    </div>
+
+    <!-- STEP 15: Supabase status update -->
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">15</div>
+        <div class="step-summary">
+          <h4>Update Supabase job status</h4>
+          <div class="tool-label">Make.com > HTTP "Make a request" > Supabase</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>Mark this job as processed so it doesn't get picked up again tomorrow.</p>
+        <div class="substep"><span class="substep-num">a.</span> Method: PATCH</div>
+        <div class="substep"><span class="substep-num">b.</span> URL:</div>
+        <div class="code-block">https://jhreeyesdtnmanolmjqu.supabase.co/rest/v1/jobs?id=eq.{{2.id}}</div>
+        <div class="substep"><span class="substep-num">c.</span> Headers: Same as Module 1.</div>
+        <div class="substep"><span class="substep-num">d.</span> Body: {"status": "drafted", "updated_at": "{{now}}"}</div>
+        <div class="substep"><span class="substep-num">e.</span> If Claude said "skip", set status to "skipped" instead.</div>
+      </div>
+    </div>
+
+    <!-- STEP 16: Weekly re-engage -->
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">16</div>
+        <div class="step-summary">
+          <h4>Weekly: Re-engage stale contacts (90+ days)</h4>
+          <div class="tool-label">Make.com (separate schedule or second route)</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>Separate scenario or second route. Runs weekly.</p>
+        <div class="substep"><span class="substep-num">a.</span> Query Supabase for contacts where updated_at > 90 days and status != "archived".</div>
+        <div class="substep"><span class="substep-num">b.</span> For each, search Jamie's Gmail to confirm no recent threads.</div>
+        <div class="substep"><span class="substep-num">c.</span> Call Claude with tone samples and contact info for a "checking in" style email.</div>
+        <div class="substep"><span class="substep-num">d.</span> Create Gmail draft with *tv-emails label. Update Supabase status to "re-engage_drafted".</div>
+      </div>
+    </div>
+
+    <!-- STEP 17: Test -->
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">17</div>
+        <div class="step-summary">
+          <h4>Test end-to-end and activate</h4>
+          <div class="tool-label">Make.com + Gmail + Supabase</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <div class="substep"><span class="substep-num">a.</span> Run the scenario once manually.</div>
+        <div class="substep"><span class="substep-num">b.</span> Verify Apollo org enrichment returns company data.</div>
+        <div class="substep"><span class="substep-num">c.</span> Verify RF contacts get found and upserted into Supabase.</div>
+        <div class="substep"><span class="substep-num">d.</span> Verify Gmail drafts appear with *tv-emails label.</div>
+        <div class="substep"><span class="substep-num">e.</span> Check Supabase: job statuses updated (drafted, skipped).</div>
+        <div class="substep"><span class="substep-num">f.</span> Review Claude drafts for quality. Adjust system prompt if needed.</div>
+        <div class="substep"><span class="substep-num">g.</span> Turn on daily schedule.</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ============================================ -->
+<!-- SCENARIO 3: COMPANY TAGGING                   -->
+<!-- ============================================ -->
+<div class="scenario-section" id="s3">
+  <div class="scenario-header-block">
+    <div class="scenario-label">Scenario 3</div>
+    <div class="scenario-title">Company Tagging in the UI</div>
+    <div class="scenario-subtitle">Tiffany tags a company as Tier 1/2/VC/Machine in the Bolt UI. Company enters tracking and gets its jobs scraped.</div>
+    <div class="status-row">
+      <span class="status-chip partial">Partially in Gobii</span>
+      <span class="tool-chip primary">Bolt UI</span>
+      <span class="tool-chip">Supabase</span>
+      <span class="tool-chip">Make.com</span>
+      <span class="tool-chip">Gobii</span>
+    </div>
+  </div>
+
+  <div class="flow-box">
+    <h3>Data Flow</h3>
+    <div class="flow-row">
+      <div class="flow-node output">Bolt UI: Tag company</div>
+      <span class="flow-arrow">&#8594;</span>
+      <div class="flow-node data">Supabase: update tier</div>
+      <span class="flow-arrow">&#8594;</span>
+      <div class="flow-node tool">Supabase DB webhook</div>
+      <span class="flow-arrow">&#8594;</span>
+      <div class="flow-node tool">Make.com: trigger scrape</div>
+      <span class="flow-arrow">&#8594;</span>
+      <div class="flow-node tool">Gobii: scrape job board</div>
+      <span class="flow-arrow">&#8594;</span>
+      <div class="flow-node data">Supabase: jobs</div>
+    </div>
+  </div>
+
+  <div class="steps-container">
+    <h2>Steps</h2>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">1</div>
+        <div class="step-summary">
+          <h4>Ensure Bolt UI writes tier changes directly to Supabase</h4>
+          <div class="tool-label">Bolt UI code</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>When the user selects a tier for a company in the UI, it should update Supabase immediately:</p>
+        <div class="code-block"><span class="keyword">async function</span> tagCompany(companyId, tier) {
+  <span class="keyword">const</span> { data, error } = <span class="keyword">await</span> supabase
+    .from(<span class="string">'companies'</span>)
+    .update({ tier: tier, status: <span class="string">'active'</span> })
+    .eq(<span class="string">'id'</span>, companyId);
+
+  <span class="comment">// Optionally trigger the scrape webhook immediately</span>
+  <span class="keyword">await</span> fetch(<span class="string">'https://hook.us1.make.com/YOUR_S3_WEBHOOK'</span>, {
+    method: <span class="string">'POST'</span>,
+    headers: { <span class="string">'Content-Type'</span>: <span class="string">'application/json'</span> },
+    body: JSON.stringify({ company_id: companyId, tier: tier })
+  });
+}</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">2</div>
+        <div class="step-summary">
+          <h4>Create Make.com scenario "S3 - Company Tagged"</h4>
+          <div class="tool-label">Make.com</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <div class="substep"><span class="substep-num">a.</span> Trigger: Custom webhook (receives company_id and tier from Bolt UI).</div>
+        <div class="substep"><span class="substep-num">b.</span> Module 1: HTTP GET from Supabase to fetch the company's full record (name, website, jobs_url).</div>
+        <div class="substep"><span class="substep-num">c.</span> Module 2: If the company has a jobs_url, trigger your Gobii scraper to scrape that URL. (If Gobii has a webhook/API, call it here. Otherwise, add the jobs_url to Gobii's monitoring list manually for now and note this as a gap.)</div>
+        <div class="substep"><span class="substep-num">d.</span> Module 3: If the company is tagged "VC", also query vc_firms to check if this company appears in any VC portfolio. If so, note the VC connection in the company record.</div>
+        <div class="substep"><span class="substep-num">e.</span> Module 4: Log to activity_log: {type: "company_tagged", company_id, details: {tier}}.</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">3</div>
+        <div class="step-summary">
+          <h4>Build the company dashboard view in Bolt UI</h4>
+          <div class="tool-label">Bolt UI</div>
+        </span>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>Your Bolt UI needs a Companies view that shows:</p>
+        <div class="substep"><span class="substep-num">a.</span> Company name, website link, tier badge, funding info, headcount.</div>
+        <div class="substep"><span class="substep-num">b.</span> Dropdown to change the tier (triggers the tagCompany function above).</div>
+        <div class="substep"><span class="substep-num">c.</span> List of open jobs at this company (from jobs table, filtered by company_id).</div>
+        <div class="substep"><span class="substep-num">d.</span> List of people you know there (from people table, filtered by company_id).</div>
+        <div class="substep"><span class="substep-num">e.</span> "Last scraped" timestamp showing when jobs were last checked.</div>
+        <div class="substep"><span class="substep-num">f.</span> Query: supabase.from('companies').select('*').order('updated_at', {ascending: false})</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================ -->
+<!-- SCENARIO 4: NEW COMPANY ADDED                -->
+<!-- ============================================ -->
+<div class="scenario-section" id="s4">
+  <div class="scenario-header-block">
+    <div class="scenario-label">Scenario 4</div>
+    <div class="scenario-title">New Company Added to RecruiterFlow</div>
+    <div class="scenario-subtitle">Company added to RF with Machine or VC tag. Auto-scrape job board, pull VC portfolio connections, start monitoring.</div>
+    <div class="status-row">
+      <span class="status-chip partial">Gobii scrapes, but data stays in Gobii</span>
+      <span class="tool-chip primary">Make.com</span>
+      <span class="tool-chip">RecruiterFlow API</span>
+      <span class="tool-chip">Gobii</span>
+      <span class="tool-chip">Supabase</span>
+    </div>
+  </div>
+
+  <div class="steps-container">
+    <h2>Steps</h2>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">1</div>
+        <div class="step-summary">
+          <h4>Extend your S1 Make.com scenario OR create a new "S4 - Company Ingest"</h4>
+          <div class="tool-label">Make.com</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>You have two options:</p>
+        <div class="substep"><span class="substep-num">a.</span> Option A: Add a second branch to your S1 scenario. After the RF API call, use a Router module. Branch 1 handles contacts (existing S1 flow). Branch 2 handles companies.</div>
+        <div class="substep"><span class="substep-num">b.</span> Option B: Create a separate "S4 - Company Ingest" scenario that polls the RF companies endpoint on the same schedule.</div>
+        <p style="margin-top:10px;">I'd recommend Option B for clarity, since company processing is different from contact processing.</p>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">2</div>
+        <div class="step-summary">
+          <h4>Poll RecruiterFlow for new/updated companies</h4>
+          <div class="tool-label">Make.com > HTTP Module</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>RecruiterFlow calls companies "clients". Use the client search endpoint to pull only Machine/VC tagged companies:</p>
+        <div class="substep"><span class="substep-num">a.</span> Method: POST</div>
+        <div class="substep"><span class="substep-num">b.</span> URL: https://api.recruiterflow.com/api/external/client/search</div>
+        <div class="substep"><span class="substep-num">c.</span> Headers: RF-Api-Key = your key, Content-Type = application/json</div>
+        <div class="substep"><span class="substep-num">d.</span> Body:</div>
+        <div class="code-block">{
+  "items_per_page": "50",
+  "current_page": "1",
+  "conjunction": "match-any",
+  "filters": [
+    {"conjunction": "in", "key": "tags", "values": [7, 8]}
+  ]
+}
+
+<span class="comment">// Same as S1: "tags" is multi-select, searched by numeric ID</span>
+<span class="comment">// Replace 7, 8 with your actual tag IDs for "Machine" and "VC"</span></div>
+        <div class="substep"><span class="substep-num">e.</span> Response comes back as {"data": [...], "total_items": N}. Each client object includes name, domain, careers_page, industry, company_size, tags, and any open jobs.</div>
+        <div class="substep"><span class="substep-num">f.</span> Alternatively, use GET https://api.recruiterflow.com/api/external/client/list to pull all clients and filter by tag in Make.com.</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">3</div>
+        <div class="step-summary">
+          <h4>Upsert company into Supabase</h4>
+          <div class="tool-label">Make.com > HTTP Module > Supabase</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <div class="code-block"><span class="comment">// POST to companies table with merge-duplicates</span>
+{
+  "rf_id": "{{rf_company.id}}",
+  "name": "{{rf_company.name}}",
+  "website": "{{rf_company.website}}",
+  "jobs_url": "{{rf_company.careers_url}}",
+  "tier": "{{Machine_or_VC_tag}}",
+  "status": "active"
+}</div>
+        <p>Add a unique constraint on rf_id for companies too:</p>
+        <div class="code-block"><span class="keyword">ALTER TABLE</span> companies <span class="keyword">ADD CONSTRAINT</span> companies_rf_id_unique <span class="keyword">UNIQUE</span> (rf_id);</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">4</div>
+        <div class="step-summary">
+          <h4>Trigger job board scrape via Gobii</h4>
+          <div class="tool-label">Gobii + Make.com</div>
+        </span>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>This depends on how Gobii works in your setup:</p>
+        <div class="substep"><span class="substep-num">a.</span> If Gobii has an API/webhook: add an HTTP call to trigger a scrape of the company's jobs_url. Pass results back to Supabase.</div>
+        <div class="substep"><span class="substep-num">b.</span> If Gobii is manually configured: add the company's jobs URL to Gobii's monitoring list. Then set up Gobii to send results to a Make.com webhook that writes to Supabase.</div>
+        <div class="substep"><span class="substep-num">c.</span> Either way, when scrape results come in, insert/upsert into the jobs table with source = 'scrape' and the company_id.</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">5</div>
+        <div class="step-summary">
+          <h4>If VC-tagged: check for VC portfolio connections</h4>
+          <div class="tool-label">Make.com > Supabase</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <div class="substep"><span class="substep-num">a.</span> Add a Router module. If company tier = "VC", take this branch.</div>
+        <div class="substep"><span class="substep-num">b.</span> Query vc_firms table to see if any VC has invested in this company (you may need to search by company name or domain).</div>
+        <div class="substep"><span class="substep-num">c.</span> If found, update the company record: portfolio_of = vc_firm_name, vc_investor = vc_firm_name.</div>
+        <div class="substep"><span class="substep-num">d.</span> Log to activity_log.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================ -->
+<!-- SCENARIO 5: WEEKLY DIGEST                     -->
+<!-- ============================================ -->
+<div class="scenario-section" id="s5">
+  <div class="scenario-header-block">
+    <div class="scenario-label">Scenario 5</div>
+    <div class="scenario-title">Weekly Digest Email</div>
+    <div class="scenario-subtitle">Every Friday at 9AM, email Tiffany + Jamie a summary of what the system found that week.</div>
+    <div class="status-row">
+      <span class="status-chip partial">Gobii does some, mostly manual</span>
+      <span class="tool-chip primary">Make.com</span>
+      <span class="tool-chip">Supabase</span>
+      <span class="tool-chip">Claude API</span>
+      <span class="tool-chip">Gmail</span>
+    </div>
+  </div>
+
+  <div class="steps-container">
+    <h2>Steps</h2>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">1</div>
+        <div class="step-summary">
+          <h4>Create Make.com scenario "S5 - Weekly Digest" with scheduled trigger</h4>
+          <div class="tool-label">Make.com</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <div class="substep"><span class="substep-num">a.</span> Create a new scenario. Click the clock icon and set schedule to "Every week" on Friday at 9:00 AM your timezone.</div>
+        <div class="substep"><span class="substep-num">b.</span> Alternatively, use "Once a week" under "At regular intervals".</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">2</div>
+        <div class="step-summary">
+          <h4>Pull this week's data from Supabase (4 parallel HTTP calls)</h4>
+          <div class="tool-label">Make.com > HTTP Modules</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>Add 4 HTTP GET modules. Each one queries Supabase for a different slice of data from the last 7 days. Use the filter: created_at=gte.{{formatDate(addDays(now; -7); "YYYY-MM-DDTHH:mm:ssZ")}}</p>
+        <div class="substep"><span class="substep-num">a.</span> New people added this week: GET /rest/v1/people?created_at=gte.[7 days ago]&select=name,title,company_name,tier,status</div>
+        <div class="substep"><span class="substep-num">b.</span> New jobs found this week: GET /rest/v1/jobs?created_at=gte.[7 days ago]&select=title,company_name,source,vc_source,warm_contact_name,url</div>
+        <div class="substep"><span class="substep-num">c.</span> Drafts created/sent this week: GET /rest/v1/drafts?created_at=gte.[7 days ago]&select=to_name,subject,status,type</div>
+        <div class="substep"><span class="substep-num">d.</span> Activity log highlights: GET /rest/v1/activity_log?created_at=gte.[7 days ago]&type=in.(funding_alert,job_change)&select=*</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">3</div>
+        <div class="step-summary">
+          <h4>Call Claude API to format the digest</h4>
+          <div class="tool-label">Make.com > HTTP Module > Anthropic API</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>Send all the raw data to Claude and ask it to format a clean email digest:</p>
+        <div class="code-block">{
+  "model": "claude-sonnet-4-20250514",
+  "max_tokens": 2048,
+  "system": "You format weekly digest emails for a recruiting team. Be concise and scannable. Group by category. Use short bullet points. Label warm intro paths clearly. Format as HTML email.",
+  "messages": [{
+    "role": "user",
+    "content": "Format a weekly digest email for Tiffany and Jamie. Here's this week's data:\n\nNEW LEADS:\n{{people_json}}\n\nNEW JOBS FOUND:\n{{jobs_json}}\n\nDRAFTS:\n{{drafts_json}}\n\nFUNDING & JOB CHANGES:\n{{activity_json}}\n\nGroup jobs by: VC Portfolio Roles, Past Client Roles, OG Member Company Roles. Label each with the warm contact path (who you know there). Include open role count per company."
+  }]
+}</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">4</div>
+        <div class="step-summary">
+          <h4>Send the digest email via Gmail</h4>
+          <div class="tool-label">Make.com > Gmail Module</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <div class="substep"><span class="substep-num">a.</span> Add Gmail "Send an Email" module.</div>
+        <div class="substep"><span class="substep-num">b.</span> To: tiffany@artfulconcern.com, jamie@[their domain]</div>
+        <div class="substep"><span class="substep-num">c.</span> Subject: "GT Machine Weekly Digest - {{formatDate(now; 'MMM D, YYYY')}}"</div>
+        <div class="substep"><span class="substep-num">d.</span> Body: the HTML output from Claude's response.</div>
+        <div class="substep"><span class="substep-num">e.</span> Set Content Type to HTML.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================ -->
+<!-- SCENARIO 6: SLACK NOTIFICATIONS               -->
+<!-- ============================================ -->
+<div class="scenario-section" id="s6">
+  <div class="scenario-header-block">
+    <div class="scenario-label">Scenario 6</div>
+    <div class="scenario-title">Slack Notifications</div>
+    <div class="scenario-subtitle">Real-time Slack alerts for hot leads, DNA-fit jobs, and relevant LinkedIn activity.</div>
+    <div class="status-row">
+      <span class="status-chip partial">Partial via Gobii</span>
+      <span class="tool-chip primary">Make.com</span>
+      <span class="tool-chip">Slack</span>
+      <span class="tool-chip">Supabase</span>
+    </div>
+  </div>
+
+  <div class="steps-container">
+    <h2>Steps</h2>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">1</div>
+        <div class="step-summary">
+          <h4>Create a Slack channel: #gt-machine-alerts</h4>
+          <div class="tool-label">Slack</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <div class="substep"><span class="substep-num">a.</span> Open Slack. Click "+" next to Channels. Create #gt-machine-alerts.</div>
+        <div class="substep"><span class="substep-num">b.</span> Add Tiffany and Jamie to the channel.</div>
+        <div class="substep"><span class="substep-num">c.</span> Optional: create #gt-machine-digest for weekly summaries and keep #gt-machine-alerts for real-time only.</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">2</div>
+        <div class="step-summary">
+          <h4>Create a Slack Incoming Webhook</h4>
+          <div class="tool-label">Slack API</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <div class="substep"><span class="substep-num">a.</span> Go to api.slack.com/apps. Click "Create New App" > "From scratch".</div>
+        <div class="substep"><span class="substep-num">b.</span> Name: "GT Machine Bot". Workspace: your Slack workspace.</div>
+        <div class="substep"><span class="substep-num">c.</span> In the left sidebar, click "Incoming Webhooks". Toggle it ON.</div>
+        <div class="substep"><span class="substep-num">d.</span> Click "Add New Webhook to Workspace". Select #gt-machine-alerts channel.</div>
+        <div class="substep"><span class="substep-num">e.</span> Copy the webhook URL. It looks like: https://hooks.slack.com/services/T00000/B00000/XXXX</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">3</div>
+        <div class="step-summary">
+          <h4>Add Slack notification modules to your existing Make.com scenarios</h4>
+          <div class="tool-label">Make.com > HTTP Module</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>Add a final HTTP POST module to each Make.com scenario that should trigger an alert. Here's the format:</p>
+        <div class="code-block"><span class="comment">// HTTP POST to Slack webhook</span>
+URL: https://hooks.slack.com/services/YOUR/WEBHOOK/URL
+Method: POST
+Content-Type: application/json
+Body:
+{
+  "blocks": [
+    {
+      "type": "header",
+      "text": {"type": "plain_text", "text": "New DNA-Fit Job Found"}
+    },
+    {
+      "type": "section",
+      "fields": [
+        {"type": "mrkdwn", "text": "*Company:*\n{{company_name}}"},
+        {"type": "mrkdwn", "text": "*Role:*\n{{job_title}}"},
+        {"type": "mrkdwn", "text": "*Source:*\n{{source}}"},
+        {"type": "mrkdwn", "text": "*Warm Contact:*\n{{warm_contact_name || 'None'}}"}
+      ]
+    },
+    {
+      "type": "actions",
+      "elements": [
+        {
+          "type": "button",
+          "text": {"type": "plain_text", "text": "View Job Posting"},
+          "url": "{{job_url}}"
+        }
+      ]
+    }
+  ]
+}</div>
+        <p style="margin-top:12px;">Add this to these scenarios:</p>
+        <div class="substep"><span class="substep-num">a.</span> S2 (Person Workflow): Alert when a draft is created for a high-tier contact.</div>
+        <div class="substep"><span class="substep-num">b.</span> S7 (Monitor Roles): Alert when a new DNA-fit job appears.</div>
+        <div class="substep"><span class="substep-num">c.</span> S9 (Job Changes): Alert when someone in the network changes roles.</div>
+        <div class="substep"><span class="substep-num">d.</span> S10 (VC Portco): Alert when a VC portfolio company posts a matching role.</div>
+        <div class="substep"><span class="substep-num">e.</span> S11 (OG): Alert when an OG member posts a hot job.</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">4</div>
+        <div class="step-summary">
+          <h4>Optional: LinkedIn post monitoring</h4>
+          <div class="tool-label">Gobii or third-party service</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>LinkedIn doesn't have a public API for monitoring posts. Options:</p>
+        <div class="substep"><span class="substep-num">a.</span> Gobii: If Gobii can monitor LinkedIn profiles for new posts, set that up and have it send results to a Make.com webhook, which then filters for relevant posts and sends to Slack.</div>
+        <div class="substep"><span class="substep-num">b.</span> PhantomBuster or similar: These tools can monitor LinkedIn activity. They cost $50-100/month but can watch a list of profiles.</div>
+        <div class="substep"><span class="substep-num">c.</span> Manual for now: Flag this as a future automation. For now, when Jamie sees something relevant on LinkedIn, he can manually share it in the Slack channel.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================ -->
+<!-- SCENARIO 7: MONITOR OPEN ROLES                -->
+<!-- ============================================ -->
+<div class="scenario-section" id="s7">
+  <div class="scenario-header-block">
+    <div class="scenario-label">Scenario 7</div>
+    <div class="scenario-title">Monitor Open Roles (Daily Job Board Check)</div>
+    <div class="scenario-subtitle">Daily scrape of all tracked company job boards. Compare to previous data. Alert on new DNA-fit roles.</div>
+    <div class="status-row">
+      <span class="status-chip partial">Gobii scrapes, change detection unreliable</span>
+      <span class="tool-chip primary">Make.com</span>
+      <span class="tool-chip">Gobii</span>
+      <span class="tool-chip">Supabase</span>
+      <span class="tool-chip">Slack</span>
+    </div>
+  </div>
+
+  <div class="steps-container">
+    <h2>Steps</h2>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">1</div>
+        <div class="step-summary">
+          <h4>Keep Gobii running its daily scrapes (this part works)</h4>
+          <div class="tool-label">Gobii</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>Don't change what's working. Gobii handles the actual scraping of career pages. The problem is that Gobii's results don't land in Supabase. Focus on bridging that gap.</p>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">2</div>
+        <div class="step-summary">
+          <h4>Set up Gobii to send results to Make.com</h4>
+          <div class="tool-label">Gobii + Make.com</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <div class="substep"><span class="substep-num">a.</span> Create a new Make.com scenario "S7 - Job Board Results Ingest" with a Custom Webhook trigger.</div>
+        <div class="substep"><span class="substep-num">b.</span> In Gobii, configure your scrape workflows to POST results to this webhook URL when scraping completes. (Check Gobii's output/webhook settings.)</div>
+        <div class="substep"><span class="substep-num">c.</span> If Gobii can't POST to a webhook, set up a daily Make.com scenario that polls Gobii's API or exports to pull the latest results.</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">3</div>
+        <div class="step-summary">
+          <h4>In Make.com: compare scraped jobs to existing Supabase data</h4>
+          <div class="tool-label">Make.com > HTTP + Logic</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <div class="substep"><span class="substep-num">a.</span> For each job from Gobii, query Supabase: GET /rest/v1/jobs?url=eq.{{job_url}}&select=id,status</div>
+        <div class="substep"><span class="substep-num">b.</span> If no match found: this is a NEW job. Insert it with status='new', first_seen=now().</div>
+        <div class="substep"><span class="substep-num">c.</span> If match found: update last_seen=now(). This job still exists.</div>
+        <div class="substep"><span class="substep-num">d.</span> After processing all jobs from the scrape, find jobs in Supabase for this company where last_seen is older than today. Those jobs have been removed from the board. Update their status to 'closed'.</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">4</div>
+        <div class="step-summary">
+          <h4>Apply DNA fit filter to new jobs</h4>
+          <div class="tool-label">Make.com > Filter</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>Your DNA filter has three layers: title match, location, and funding stage. Apply all three.</p>
+        <div class="substep"><span class="substep-num">a.</span> Title match (exact): CFO, COO, CRO. Title match (substring): Chief of Staff, Director of Finance, Director of Technical Accounting, Head of Accounting Operations, Head of Finance, Head of Finance and Operations, Head of FP&amp;A, Head of Operations, Head of Operations and Finance, Head of Ops and Finance, Head of Revenue Cycle Management, Head of Strategic Finance, SVP of Finance, SVP of Finance and Operations, SVP of Operations, Vice President of Revenue Operations, VP of Operations, VP of Finance.</div>
+        <div class="substep"><span class="substep-num">b.</span> Location: United States only. Remote is included. Non-US cities or countries are excluded.</div>
+        <div class="substep"><span class="substep-num">c.</span> Salary: If the posting lists a salary, it must be $200K+. If salary is unlisted, include the job.</div>
+        <div class="substep"><span class="substep-num">d.</span> Funding stage: Series A, B, C, D only. Series D and above get excluded and removed from monitoring. Use VC portfolio page + Crunchbase public autocomplete (no API key needed) for stage data.</div>
+        <div class="substep"><span class="substep-num">e.</span> If the job passes all filters, update the job record: dna_fit = true. Only DNA-fit jobs trigger notifications in the next step.</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">5</div>
+        <div class="step-summary">
+          <h4>Look up warm contacts at the company</h4>
+          <div class="tool-label">Make.com > HTTP > Supabase</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <div class="substep"><span class="substep-num">a.</span> For each new DNA-fit job, query Supabase: GET /rest/v1/people?company_id=eq.{{job.company_id}}&status=neq.archived&select=name,title,tier</div>
+        <div class="substep"><span class="substep-num">b.</span> If contacts found, update the job record: warm_contact_id = first contact's ID, warm_contact_name = their name.</div>
+        <div class="substep"><span class="substep-num">c.</span> This gives you "who we know there" alongside each job.</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">6</div>
+        <div class="step-summary">
+          <h4>Send Slack notification for new DNA-fit jobs</h4>
+          <div class="tool-label">Make.com > Slack webhook</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>Use the same Slack webhook format from Scenario 6, Step 3. Include: company name, job title, link to posting, warm contact name (if any), and which tier or VC the company is associated with.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================ -->
+<!-- SCENARIO 8: AUTO-ARCHIVE                      -->
+<!-- ============================================ -->
+<div class="scenario-section" id="s8">
+  <div class="scenario-header-block">
+    <div class="scenario-label">Scenario 8</div>
+    <div class="scenario-title">Auto-Archive Non-Actionable People</div>
+    <div class="scenario-subtitle">After enrichment, if a person has no email, no job match, or their company doesn't fit DNA, remove them from the active queue.</div>
+    <div class="status-row">
+      <span class="status-chip not-started">Not Started</span>
+      <span class="tool-chip primary">Make.com</span>
+      <span class="tool-chip">Supabase</span>
+    </div>
+  </div>
+
+  <div class="context-box warning">
+    <h3>Why this matters</h3>
+    <p>Without auto-archive, your Bolt UI queue fills up with people who can't be acted on. Jamie and Tiffany waste time scrolling past dead leads. This keeps the queue clean so you only see people worth reaching out to.</p>
+  </div>
+
+  <div class="steps-container">
+    <h2>Steps</h2>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">1</div>
+        <div class="step-summary">
+          <h4>Add a Router module after Apollo enrichment in Scenario 2</h4>
+          <div class="tool-label">Make.com (edit S2 scenario)</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <div class="substep"><span class="substep-num">a.</span> Open your S2 scenario in Make.com.</div>
+        <div class="substep"><span class="substep-num">b.</span> After Step 6 (where you update Supabase with Apollo data), add a Router module.</div>
+        <div class="substep"><span class="substep-num">c.</span> Route 1 (Continue to draft): Person passes all filters below.</div>
+        <div class="substep"><span class="substep-num">d.</span> Route 2 (Archive): Person fails any filter.</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">2</div>
+        <div class="step-summary">
+          <h4>Define the "actionable" filter conditions for Route 1</h4>
+          <div class="tool-label">Make.com > Router Filter</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>A person is actionable if ALL of these are true:</p>
+        <div class="substep"><span class="substep-num">a.</span> Email was found (apollo_person.email is not empty)</div>
+        <div class="substep"><span class="substep-num">b.</span> Company is US-based (or remote). Non-US locations get archived.</div>
+        <div class="substep"><span class="substep-num">c.</span> Company funding stage is Series A, B, C, or D. Series D+ or unfunded companies get archived.</div>
+        <div class="substep"><span class="substep-num">d.</span> Company has open roles matching your DNA titles: CFO, COO, CRO, Chief of Staff, Director of Finance, Director of Technical Accounting, Head of Accounting Operations, Head of Finance (and variants), Head of FP&amp;A, Head of Operations (and variants), Head of Revenue Cycle Management, Head of Strategic Finance, SVP of Finance/Operations, VP of Operations/Finance, Vice President of Revenue Operations.</div>
+        <div class="substep"><span class="substep-num">e.</span> If the role lists a salary, it must be $200K+. Unlisted salary is fine.</div>
+        <p style="margin-top:10px;">These criteria match your scraper filters exactly. If you add new target titles to the scraper, add them here too.</p>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">3</div>
+        <div class="step-summary">
+          <h4>Build the archive route (Route 2)</h4>
+          <div class="tool-label">Make.com > HTTP Module</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <div class="substep"><span class="substep-num">a.</span> Determine the archive reason. Use a Set Variable module to create a reason string. Examples: "No email found", "Company too large (5000+ employees)", "Not VC-funded", "Junior title".</div>
+        <div class="substep"><span class="substep-num">b.</span> Update person in Supabase: PATCH /rest/v1/people?id=eq.{{person_id}}</div>
+        <div class="code-block">{
+  "status": "archived",
+  "archive_reason": "{{calculated_reason}}"
+}</div>
+        <div class="substep"><span class="substep-num">c.</span> Log to activity_log: {type: "archived", person_id, details: {reason: "..."}}.</div>
+        <div class="substep"><span class="substep-num">d.</span> The person disappears from your Bolt UI queue (because the queue filters for status != 'archived').</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">4</div>
+        <div class="step-summary">
+          <h4>Add "Un-archive" button to Bolt UI</h4>
+          <div class="tool-label">Bolt UI</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>Build an "Archived" tab in Bolt UI that shows archived people with their reason. Include an "Un-archive" button that sets status back to "queued" in case the system got it wrong.</p>
+        <div class="code-block"><span class="keyword">async function</span> unarchivePerson(personId) {
+  <span class="keyword">await</span> supabase
+    .from(<span class="string">'people'</span>)
+    .update({ status: <span class="string">'queued'</span>, archive_reason: <span class="keyword">null</span> })
+    .eq(<span class="string">'id'</span>, personId);
+}</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">5</div>
+        <div class="step-summary">
+          <h4>Optional: Create a standalone daily cleanup scenario</h4>
+          <div class="tool-label">Make.com</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>For people who were added before you had auto-archive, create a one-time or daily scenario that:</p>
+        <div class="substep"><span class="substep-num">a.</span> Queries all people where status = 'queued' AND enriched = true.</div>
+        <div class="substep"><span class="substep-num">b.</span> Applies the same filter rules from Step 2.</div>
+        <div class="substep"><span class="substep-num">c.</span> Archives those who don't pass.</div>
+        <p>Run this once to clean up the existing queue, then it's handled automatically going forward by the S2 Router.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================ -->
+<!-- SCENARIO 9: JOB CHANGES                       -->
+<!-- ============================================ -->
+<div class="scenario-section" id="s9">
+  <div class="scenario-header-block">
+    <div class="scenario-label">Scenario 9</div>
+    <div class="scenario-title">Contact Enrichment + Job Change Detection</div>
+    <div class="scenario-subtitle">Scheduled enrichment: pulls all contacts from a RecruiterFlow list, enriches each via Apollo People Match, compares against stored data to detect job changes, writes updated info back to RecruiterFlow, and flags job changes in Supabase for S2 to act on. Run once for initial bulk enrichment, then weekly to keep data current.</div>
+    <div class="status-row">
+      <span class="status-chip not-started">Not Started</span>
+      <span class="tool-chip primary">Make.com</span>
+      <span class="tool-chip">Apollo API</span>
+      <span class="tool-chip">RecruiterFlow API</span>
+      <span class="tool-chip">Supabase</span>
+    </div>
+  </div>
+
+  <div class="flow-box">
+    <h3>Data Flow</h3>
+    <div class="flow-row">
+      <div class="flow-node tool">1. RF: pull contact list</div>
+      <span class="flow-arrow">&#8594;</span>
+      <div class="flow-node tool">2. Iterator</div>
+      <span class="flow-arrow">&#8594;</span>
+      <div class="flow-node tool">3. Apollo: People Match</div>
+      <span class="flow-arrow">&#8594;</span>
+      <div class="flow-node tool">4. Filter: data changed?</div>
+      <span class="flow-arrow">&#8594;</span>
+      <div class="flow-node data">5. RF: update contact</div>
+    </div>
+    <div class="flow-row" style="margin-top:8px;">
+      <div class="flow-node tool">6. Filter: job change?</div>
+      <span class="flow-arrow">&#8594;</span>
+      <div class="flow-node data">7. Supabase: update + flag</div>
+      <span class="flow-arrow">&#8594;</span>
+      <div class="flow-node output">8. Slack notification (optional)</div>
+    </div>
+  </div>
+
+  <div class="context-box">
+    <h3>How it works</h3>
+    <p>This scenario does two things: (1) keeps your RecruiterFlow contact data current by enriching via Apollo, and (2) detects job changes so S2 can use them as outreach triggers. Run it once manually to do the initial bulk enrichment of your full contact list, then set it to weekly.</p>
+  </div>
+
+  <div class="context-box warning">
+    <h3>Apollo Credit Usage</h3>
+    <p>Apollo People Match costs 1 credit per call. If you have 1,156 contacts, the initial run uses 1,156 credits. Weekly runs use the same. Check your Apollo plan limits. You can split into batches: daily for priority contacts (Machine tag), weekly for everyone else.</p>
+  </div>
+
+  <div class="context-box">
+    <h3>Prerequisites</h3>
+    <div class="prereq-list">
+      <div class="prereq-item"><div class="prereq-check" onclick="this.classList.toggle('checked')"></div> Apollo API key</div>
+      <div class="prereq-item"><div class="prereq-check" onclick="this.classList.toggle('checked')"></div> RecruiterFlow API key + credentials in Make.com</div>
+      <div class="prereq-item"><div class="prereq-check" onclick="this.classList.toggle('checked')"></div> Contacts loaded in RecruiterFlow (already done, 1,156 contacts)</div>
+      <div class="prereq-item"><div class="prereq-check" onclick="this.classList.toggle('checked')"></div> Supabase people table with rf_id column</div>
+    </div>
+  </div>
+
+  <div class="steps-container">
+    <h2>Steps</h2>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">1</div>
+        <div class="step-summary">
+          <h4>Create Make.com scenario "S9 - Contact Enrichment + Job Changes"</h4>
+          <div class="tool-label">Make.com</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <div class="substep"><span class="substep-num">a.</span> Create new scenario.</div>
+        <div class="substep"><span class="substep-num">b.</span> Initial run: manual trigger (run once to enrich all contacts).</div>
+        <div class="substep"><span class="substep-num">c.</span> After initial run: set schedule to weekly (Monday morning).</div>
+        <div class="substep"><span class="substep-num">d.</span> Optional: create a second schedule for daily priority contacts (Machine tag only).</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">2</div>
+        <div class="step-summary">
+          <h4>Module 1: Pull contacts from RecruiterFlow</h4>
+          <div class="tool-label">Make.com > HTTP "Make a request" > RecruiterFlow API</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>Pull all contacts (or a filtered set) from RecruiterFlow.</p>
+        <div class="substep"><span class="substep-num">a.</span> Method: POST</div>
+        <div class="substep"><span class="substep-num">b.</span> URL:</div>
+        <div class="code-block">https://api.recruiterflow.com/api/external/contact/search</div>
+        <div class="substep"><span class="substep-num">c.</span> Auth: RF-Api-Key credential in Make.com</div>
+        <div class="substep"><span class="substep-num">d.</span> Body (all contacts with Machine tag):</div>
+        <div class="code-block">{
+  "conjunction": "match-all",
+  "current_page": 1,
+  "items_per_page": 100,
+  "filters": [
+    {
+      "key": "tag",
+      "type": "text",
+      "conjunction": "in",
+      "values": ["Machine"]
+    }
+  ]
+}</div>
+        <div class="substep"><span class="substep-num">e.</span> For the initial bulk run, you may want to remove the tag filter and pull all contacts. Use pagination (increment current_page) to get through all 1,156.</div>
+        <div class="substep"><span class="substep-num">f.</span> Parse response: Yes</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">3</div>
+        <div class="step-summary">
+          <h4>Module 2: Iterator (loop through each contact)</h4>
+          <div class="tool-label">Make.com > Flow Control > Iterator</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <div class="substep"><span class="substep-num">a.</span> Array: {{1.data}} (the data array from the RF search).</div>
+        <div class="substep"><span class="substep-num">b.</span> Each iteration gives you: name, email[], current_designation, client_company_name, linkedin_profile, id.</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">4</div>
+        <div class="step-summary">
+          <h4>Module 3: Apollo People Match (enrich each contact)</h4>
+          <div class="tool-label">Make.com > HTTP "Make a request" > Apollo API</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>Enrich each RF contact via Apollo to get their current title, company, email, LinkedIn, and phone.</p>
+        <div class="substep"><span class="substep-num">a.</span> Method: POST</div>
+        <div class="substep"><span class="substep-num">b.</span> URL:</div>
+        <div class="code-block">https://api.apollo.io/api/v1/people/match</div>
+        <div class="substep"><span class="substep-num">c.</span> Headers:</div>
+        <div class="code-block">Content-Type: application/json
+x-api-key: YOUR_APOLLO_API_KEY</div>
+        <div class="substep"><span class="substep-num">d.</span> Body:</div>
+        <div class="code-block">{
+  "email": "{{2.email[1]}}",
+  "first_name": "{{2.first_name}}",
+  "last_name": "{{2.last_name}}",
+  "organization_name": "{{2.client_company_name}}"
+}</div>
+        <div class="substep"><span class="substep-num">e.</span> Sending both email and name+company gives Apollo the best chance of a match.</div>
+        <div class="substep"><span class="substep-num">f.</span> Parse response: Yes</div>
+        <div class="substep"><span class="substep-num">g.</span> Returns: person.title, person.organization.name, person.email, person.linkedin_url, person.phone_numbers</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">5</div>
+        <div class="step-summary">
+          <h4>Filter: did Apollo return different data?</h4>
+          <div class="tool-label">Make.com > Filter (between Apollo and RF update)</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>Only update RF if Apollo found something different from what RF already has.</p>
+        <div class="substep"><span class="substep-num">a.</span> Condition (any of these are true):</div>
+        <div class="substep"><span class="substep-num">b.</span> Apollo title ({{3.person.title}}) does NOT equal RF title ({{2.current_designation}})</div>
+        <div class="substep"><span class="substep-num">c.</span> OR Apollo company ({{3.person.organization.name}}) does NOT equal RF company ({{2.client_company_name}})</div>
+        <div class="substep"><span class="substep-num">d.</span> OR RF email is empty but Apollo has one</div>
+        <div class="substep"><span class="substep-num">e.</span> If nothing changed, skip this contact (no RF update, no Supabase flag).</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">6</div>
+        <div class="step-summary">
+          <h4>Module 4: Update RecruiterFlow with Apollo data</h4>
+          <div class="tool-label">Make.com > HTTP "Make a request" > RecruiterFlow API</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>Write the fresh Apollo data back to the RF contact record.</p>
+        <div class="substep"><span class="substep-num">a.</span> Method: PATCH</div>
+        <div class="substep"><span class="substep-num">b.</span> URL:</div>
+        <div class="code-block">https://api.recruiterflow.com/api/external/contact/{{2.id}}</div>
+        <div class="substep"><span class="substep-num">c.</span> Auth: RF-Api-Key credential</div>
+        <div class="substep"><span class="substep-num">d.</span> Headers: Content-Type: application/json</div>
+        <div class="substep"><span class="substep-num">e.</span> Body:</div>
+        <div class="code-block">{
+  "current_designation": "{{3.person.title}}",
+  "linkedin_profile": "{{3.person.linkedin_url}}",
+  "phone_number": "{{3.person.phone_number}}"
+}</div>
+        <div class="substep"><span class="substep-num">f.</span> Note: check the exact RF API field names for updating contacts. The PATCH endpoint and field names may differ from the search response. Test with one contact first.</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">7</div>
+        <div class="step-summary">
+          <h4>Filter: is this a job change? (title or company different)</h4>
+          <div class="tool-label">Make.com > Filter</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>Separate job changes from simple data updates (like a new phone number).</p>
+        <div class="substep"><span class="substep-num">a.</span> Condition: Apollo company ({{3.person.organization.name}}) does NOT equal RF company ({{2.client_company_name}}) OR Apollo title ({{3.person.title}}) does NOT equal RF title ({{2.current_designation}}).</div>
+        <div class="substep"><span class="substep-num">b.</span> Only contacts who changed jobs proceed past this filter.</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">8</div>
+        <div class="step-summary">
+          <h4>Module 5: Update Supabase with job change flag</h4>
+          <div class="tool-label">Make.com > HTTP "Make a request" > Supabase</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>Update the Supabase people record with the new data and flag the job change so S2 picks it up as a trigger.</p>
+        <div class="substep"><span class="substep-num">a.</span> Method: PATCH</div>
+        <div class="substep"><span class="substep-num">b.</span> URL:</div>
+        <div class="code-block">https://jhreeyesdtnmanolmjqu.supabase.co/rest/v1/people?rf_id=eq.{{2.id}}</div>
+        <div class="substep"><span class="substep-num">c.</span> Headers: Authorization + apikey + Prefer (same as other Supabase calls)</div>
+        <div class="substep"><span class="substep-num">d.</span> Body:</div>
+        <div class="code-block">{
+  "previous_title": "{{2.current_designation}}",
+  "previous_company": "{{2.client_company_name}}",
+  "title": "{{3.person.title}}",
+  "company_name": "{{3.person.organization.name}}",
+  "last_job_change": "{{now}}",
+  "status": "job_changed"
+}</div>
+        <div class="substep"><span class="substep-num">e.</span> The "status": "job_changed" flag lets S2 pick this person up as an actionable trigger for outreach.</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">9</div>
+        <div class="step-summary">
+          <h4>Optional: Slack notification for job changes</h4>
+          <div class="tool-label">Make.com > Slack</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>Send a Slack message when a job change is detected so Jamie knows immediately.</p>
+        <div class="code-block">{{person_name}} moved from {{previous_title}} at {{previous_company}} to {{new_title}} at {{new_company}}</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">10</div>
+        <div class="step-summary">
+          <h4>Test and activate</h4>
+          <div class="tool-label">Make.com</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <div class="substep"><span class="substep-num">a.</span> Run manually with a small batch first (5-10 contacts).</div>
+        <div class="substep"><span class="substep-num">b.</span> Verify Apollo returns data and the RF update works.</div>
+        <div class="substep"><span class="substep-num">c.</span> Check RF to confirm contact records got updated.</div>
+        <div class="substep"><span class="substep-num">d.</span> Run the full initial enrichment (all contacts).</div>
+        <div class="substep"><span class="substep-num">e.</span> Set weekly schedule after initial run is complete.</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ============================================ -->
+<!-- SCENARIO 10: VC PORTCO MONITOR                -->
+<!-- ============================================ -->
+<div class="scenario-section" id="s10">
+  <div class="scenario-header-block">
+    <div class="scenario-label">Scenario 10</div>
+    <div class="scenario-title">VC Portfolio Company Job Monitor</div>
+    <div class="scenario-subtitle">Your Python scraper hits VC portfolio pages, finds companies, scrapes their job boards, and writes DNA-fit roles to Supabase.</div>
+    <div class="status-row">
+      <span class="status-chip partial">Python scraper works, outputs to HTML</span>
+      <span class="tool-chip primary">Python</span>
+      <span class="tool-chip">Supabase</span>
+      <span class="tool-chip">Bolt UI</span>
+    </div>
+  </div>
+
+  <div class="steps-container">
+    <h2>Steps</h2>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">1</div>
+        <div class="step-summary">
+          <h4>Install the Supabase Python library</h4>
+          <div class="tool-label">Python / Terminal</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <div class="code-block">pip install supabase</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">2</div>
+        <div class="step-summary">
+          <h4>Add Supabase connection to your scraper script</h4>
+          <div class="tool-label">Python</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>At the top of your existing Python scraper, add:</p>
+        <div class="code-block"><span class="keyword">import</span> os
+<span class="keyword">from</span> supabase <span class="keyword">import</span> create_client
+
+<span class="comment"># Use environment variables for security</span>
+SUPABASE_URL = os.environ.get(<span class="string">"SUPABASE_URL"</span>, <span class="string">"https://YOUR_PROJECT.supabase.co"</span>)
+SUPABASE_KEY = os.environ.get(<span class="string">"SUPABASE_KEY"</span>, <span class="string">"your_service_role_key"</span>)
+
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">3</div>
+        <div class="step-summary">
+          <h4>Pull VC firms from Supabase instead of hardcoding</h4>
+          <div class="tool-label">Python</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>Replace any hardcoded VC firm list with a Supabase query:</p>
+        <div class="code-block"><span class="comment"># Get all VC firms with portfolio URLs</span>
+result = supabase.table(<span class="string">"vc_firms"</span>).select(<span class="string">"*"</span>).not_.is_(<span class="string">"portfolio_url"</span>, <span class="string">"null"</span>).execute()
+vc_firms = result.data
+
+<span class="keyword">for</span> firm <span class="keyword">in</span> vc_firms:
+    print(f<span class="string">"Scraping portfolio for {firm['name']}: {firm['portfolio_url']}"</span>)
+    <span class="comment"># Your existing scraping logic here</span>
+    companies = scrape_portfolio_page(firm[<span class="string">"portfolio_url"</span>])
+
+    <span class="comment"># Update last_scraped timestamp</span>
+    supabase.table(<span class="string">"vc_firms"</span>).update({
+        <span class="string">"last_scraped"</span>: datetime.utcnow().isoformat()
+    }).eq(<span class="string">"id"</span>, firm[<span class="string">"id"</span>]).execute()</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">4</div>
+        <div class="step-summary">
+          <h4>Write scraped companies to the companies table</h4>
+          <div class="tool-label">Python</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <div class="code-block"><span class="keyword">for</span> company <span class="keyword">in</span> companies:
+    <span class="comment"># Upsert company (use website as unique identifier)</span>
+    supabase.table(<span class="string">"companies"</span>).upsert({
+        <span class="string">"name"</span>: company[<span class="string">"name"</span>],
+        <span class="string">"website"</span>: company[<span class="string">"website"</span>],
+        <span class="string">"jobs_url"</span>: company.get(<span class="string">"careers_url"</span>),
+        <span class="string">"portfolio_of"</span>: firm[<span class="string">"name"</span>],
+        <span class="string">"tier"</span>: <span class="string">"VC"</span>,
+        <span class="string">"dna_fit"</span>: True
+    }, on_conflict=<span class="string">"website"</span>).execute()</div>
+        <p>You'll need a unique constraint on companies.website:</p>
+        <div class="code-block"><span class="keyword">ALTER TABLE</span> companies <span class="keyword">ADD CONSTRAINT</span> companies_website_unique <span class="keyword">UNIQUE</span> (website);</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">5</div>
+        <div class="step-summary">
+          <h4>Write scraped jobs to the jobs table</h4>
+          <div class="tool-label">Python</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <div class="code-block"><span class="comment"># =============================================</span>
+<span class="comment"># DNA FILTER: Target Job Titles</span>
+<span class="comment"># Exact matches (case-insensitive)</span>
+<span class="comment"># =============================================</span>
+DNA_EXACT = [
+    <span class="string">"CFO"</span>, <span class="string">"COO"</span>, <span class="string">"CRO"</span>,
+]
+
+<span class="comment"># Substring matches (if title contains any of these)</span>
+DNA_SUBSTRING = [
+    <span class="string">"Chief of Staff"</span>,
+    <span class="string">"Director of Finance"</span>,
+    <span class="string">"Director of Technical Accounting"</span>,
+    <span class="string">"Head of Accounting Operations"</span>,
+    <span class="string">"Head of Finance"</span>,
+    <span class="string">"Head of Finance and Operations"</span>,
+    <span class="string">"Head of FP&amp;A"</span>,
+    <span class="string">"Head of Operations"</span>,
+    <span class="string">"Head of Operations and Finance"</span>,
+    <span class="string">"Head of Ops and Finance"</span>,
+    <span class="string">"Head of Revenue Cycle Management"</span>,
+    <span class="string">"Head of Strategic Finance"</span>,
+    <span class="string">"SVP of Finance"</span>,
+    <span class="string">"SVP of Finance and Operations"</span>,
+    <span class="string">"SVP of Operations"</span>,
+    <span class="string">"Vice President of Revenue Operations"</span>,
+    <span class="string">"VP of Operations"</span>,
+    <span class="string">"VP of Finance"</span>,
+]
+
+<span class="comment"># =============================================</span>
+<span class="comment"># Additional filters</span>
+<span class="comment"># =============================================</span>
+MIN_SALARY = 200000          <span class="comment"># Only when salary is listed; unlisted = include</span>
+VALID_FUNDING = [<span class="string">"A"</span>, <span class="string">"B"</span>, <span class="string">"C"</span>, <span class="string">"D"</span>]  <span class="comment"># Series D+ excluded from monitoring</span>
+US_ONLY = True               <span class="comment"># Remote included; non-US excluded</span>
+
+<span class="keyword">def</span> check_dna_fit(title, salary=<span class="keyword">None</span>, location=<span class="keyword">None</span>, funding_stage=<span class="keyword">None</span>):
+    <span class="comment"># Title check: exact match or substring</span>
+    title_lower = title.lower()
+    title_match = (
+        title_lower <span class="keyword">in</span> [t.lower() <span class="keyword">for</span> t <span class="keyword">in</span> DNA_EXACT] <span class="keyword">or</span>
+        <span class="keyword">any</span>(kw.lower() <span class="keyword">in</span> title_lower <span class="keyword">for</span> kw <span class="keyword">in</span> DNA_SUBSTRING)
+    )
+    <span class="keyword">if not</span> title_match:
+        <span class="keyword">return</span> False
+
+    <span class="comment"># Salary check: skip if listed and under $200K</span>
+    <span class="keyword">if</span> salary <span class="keyword">is not None and</span> salary &lt; MIN_SALARY:
+        <span class="keyword">return</span> False
+
+    <span class="comment"># Location check: US or Remote only</span>
+    <span class="keyword">if</span> US_ONLY <span class="keyword">and</span> location:
+        loc = location.lower()
+        <span class="keyword">if not</span> (<span class="string">"united states"</span> <span class="keyword">in</span> loc <span class="keyword">or</span> <span class="string">"remote"</span> <span class="keyword">in</span> loc <span class="keyword">or</span> <span class="string">"us"</span> == loc):
+            <span class="keyword">return</span> False
+
+    <span class="comment"># Funding check: A, B, C, D only</span>
+    <span class="keyword">if</span> funding_stage <span class="keyword">and</span> funding_stage <span class="keyword">not in</span> VALID_FUNDING:
+        <span class="keyword">return</span> False
+
+    <span class="keyword">return</span> True
+
+<span class="keyword">for</span> job <span class="keyword">in</span> scraped_jobs:
+    is_dna_fit = check_dna_fit(
+        title=job[<span class="string">"title"</span>],
+        salary=job.get(<span class="string">"salary"</span>),
+        location=job.get(<span class="string">"location"</span>),
+        funding_stage=company.get(<span class="string">"funding_stage"</span>)
+    )
+
+    supabase.table(<span class="string">"jobs"</span>).upsert({
+        <span class="string">"company_name"</span>: company[<span class="string">"name"</span>],
+        <span class="string">"title"</span>: job[<span class="string">"title"</span>],
+        <span class="string">"url"</span>: job[<span class="string">"url"</span>],
+        <span class="string">"source"</span>: <span class="string">"vc_portco"</span>,
+        <span class="string">"vc_source"</span>: firm[<span class="string">"name"</span>],
+        <span class="string">"dna_fit"</span>: is_dna_fit,
+        <span class="string">"last_seen"</span>: datetime.utcnow().isoformat(),
+        <span class="string">"status"</span>: <span class="string">"new"</span>
+    }, on_conflict=<span class="string">"url"</span>).execute()</div>
+        <p>Add unique constraint on jobs.url:</p>
+        <div class="code-block"><span class="keyword">ALTER TABLE</span> jobs <span class="keyword">ADD CONSTRAINT</span> jobs_url_unique <span class="keyword">UNIQUE</span> (url);</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">6</div>
+        <div class="step-summary">
+          <h4>Keep the HTML output as a backup (optional)</h4>
+          <div class="tool-label">Python</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>Your existing HTML generation can stay in the script. Just add the Supabase writes alongside it. Over time, as you trust the Supabase data, you can remove the HTML output.</p>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">7</div>
+        <div class="step-summary">
+          <h4>Build a "VC Jobs" view in Bolt UI</h4>
+          <div class="tool-label">Bolt UI</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>Add a new tab/view in Bolt UI that shows VC portfolio jobs:</p>
+        <div class="code-block"><span class="comment">// Query: DNA-fit jobs from VC portfolios, grouped by VC firm</span>
+<span class="keyword">const</span> { data } = <span class="keyword">await</span> supabase
+  .from(<span class="string">'jobs'</span>)
+  .select(<span class="string">'*'</span>)
+  .eq(<span class="string">'source'</span>, <span class="string">'vc_portco'</span>)
+  .eq(<span class="string">'dna_fit'</span>, true)
+  .eq(<span class="string">'status'</span>, <span class="string">'new'</span>)
+  .order(<span class="string">'created_at'</span>, { ascending: false });</div>
+        <p>Display columns: Company (link to website), Role (link to posting), VC Firm, Warm Contact (if any), First Seen date, and a "Draft Message" button that triggers Scenario 2.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================ -->
+<!-- SCENARIO 11: OG HOT JOBS                      -->
+<!-- ============================================ -->
+<div class="scenario-section" id="s11">
+  <div class="scenario-header-block">
+    <div class="scenario-label">Scenario 11</div>
+    <div class="scenario-title">OG Member Hot Jobs + Events</div>
+    <div class="scenario-subtitle">Monitor OG forums for posted roles. Draft outreach from Jamie. Track OG member job changes and funding.</div>
+    <div class="status-row">
+      <span class="status-chip partial">Somewhat in Gobii, drafts are manual</span>
+      <span class="tool-chip primary">Make.com</span>
+      <span class="tool-chip">Gobii</span>
+      <span class="tool-chip">Claude API</span>
+      <span class="tool-chip">Supabase</span>
+      <span class="tool-chip">Gmail</span>
+    </div>
+  </div>
+
+  <div class="context-box">
+    <h3>Three sub-workflows here</h3>
+    <p>Scenario 11 has three triggers: (A) OG member posts a hot job, (B) OG member changes jobs, (C) OG member's company raises funding. Each needs slightly different handling.</p>
+  </div>
+
+  <div class="steps-container">
+    <h2>Part A: OG Member Posts Open Role</h2>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">1</div>
+        <div class="step-summary">
+          <h4>Determine how OG forum posts reach your system</h4>
+          <div class="tool-label">Research / Gobii</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>This depends on what platform the OG forum uses:</p>
+        <div class="substep"><span class="substep-num">a.</span> If it's a Slack community: Use Slack API to monitor the #hot-jobs channel (or whatever the channel is). Make.com has a Slack "Watch messages" trigger.</div>
+        <div class="substep"><span class="substep-num">b.</span> If it's an email digest: Forward the OG emails to a dedicated Gmail label. Make.com can watch for new emails with that label.</div>
+        <div class="substep"><span class="substep-num">c.</span> If it's a web forum: Use Gobii to scrape the forum page periodically.</div>
+        <div class="substep"><span class="substep-num">d.</span> If it's a LinkedIn group: Hardest option. May need manual entry or PhantomBuster.</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">2</div>
+        <div class="step-summary">
+          <h4>Create Make.com scenario "S11 - OG Hot Jobs"</h4>
+          <div class="tool-label">Make.com</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <div class="substep"><span class="substep-num">a.</span> Trigger: whichever method you chose above (Slack watch, Gmail watch, or Gobii webhook).</div>
+        <div class="substep"><span class="substep-num">b.</span> Module 1: Parse the post/message to extract: person name, company name, role title, link to posting.</div>
+        <div class="substep"><span class="substep-num">c.</span> If posts are unstructured text, call Claude API to extract structured data from the post text. Send the raw post text and ask Claude to return JSON with name, company, role, and url fields.</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">3</div>
+        <div class="step-summary">
+          <h4>Check DNA fit and insert into Supabase</h4>
+          <div class="tool-label">Make.com > Supabase</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <div class="substep"><span class="substep-num">a.</span> Filter: Does the role title match DNA keywords?</div>
+        <div class="substep"><span class="substep-num">b.</span> Insert into jobs table: source = 'og_forum', company_name, title, url.</div>
+        <div class="substep"><span class="substep-num">c.</span> Look up the OG member in people table. If they exist, link warm_contact_id.</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">4</div>
+        <div class="step-summary">
+          <h4>Draft outreach email from Jamie using Claude API</h4>
+          <div class="tool-label">Make.com > Claude API</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>Use the same Claude API pattern from S2 Step 8, but with the OG-specific template from your doc:</p>
+        <div class="code-block"><span class="comment">// In the Claude API system prompt, include Jamie's OG template:</span>
+"For OG member outreach, use this template style:
+
+Hey [Name]- I saw your post about hiring a [Title] and
+wouldn't be doing my day job if I didn't throw my name
+out there to help run the search for that role.
+
+I'd welcome a call to discuss, even if just to say hello
+and catch up/get on the radar.
+
+LMK if you're up for it or just grab a time from my calendar!
+
+Personalize based on the specific role and any context
+about the person's company."</div>
+        <div class="substep"><span class="substep-num">a.</span> Save draft to Supabase drafts table with type = 'og_intro'.</div>
+        <div class="substep"><span class="substep-num">b.</span> Create Gmail draft.</div>
+        <div class="substep"><span class="substep-num">c.</span> Slack notification to #gt-machine-alerts.</div>
+      </div>
+    </div>
+  </div>
+
+  <hr class="section-sep">
+
+  <div class="steps-container">
+    <h2>Part B: OG Member Job Changes</h2>
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">5</div>
+        <div class="step-summary">
+          <h4>Tag OG members in your people table and include them in Scenario 9</h4>
+          <div class="tool-label">Supabase + Make.com</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>OG member job changes are handled by Scenario 9's weekly job change detection. Just make sure all OG members are in the people table with tier = 'OG' and status = 'active'. The S9 scenario already pulls all active, non-archived people and checks Apollo for changes.</p>
+      </div>
+    </div>
+  </div>
+
+  <hr class="section-sep">
+
+  <div class="steps-container">
+    <h2>Part C: OG Company Raises Funding</h2>
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">6</div>
+        <div class="step-summary">
+          <h4>Create Make.com scenario "S11c - OG Funding Monitor" (weekly)</h4>
+          <div class="tool-label">Make.com + Apollo</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <div class="substep"><span class="substep-num">a.</span> Weekly schedule.</div>
+        <div class="substep"><span class="substep-num">b.</span> Pull all companies from Supabase where at least one person has tier = 'OG'.</div>
+        <div class="substep"><span class="substep-num">c.</span> For each company, call Apollo Organization Enrich. Compare latest_funding_stage and total_funding to what's stored.</div>
+        <div class="substep"><span class="substep-num">d.</span> If funding has changed: update the company record, log to activity_log with type = 'funding_alert', check DNA fit, and if relevant, draft outreach congratulating them and offering recruiting help.</div>
+        <div class="substep"><span class="substep-num">e.</span> Slack notification: "OG Company [Name] just raised [Amount] ([Stage]). Contact: [OG Member Name]."</div>
+      </div>
+    </div>
+
+    <div class="step-card">
+      <div class="step-header" onclick="toggleStep(this)">
+        <div class="step-check" onclick="event.stopPropagation(); this.classList.toggle('checked'); updateProgress();"></div>
+        <div class="step-num">7</div>
+        <div class="step-summary">
+          <h4>Set up the OG Welcome Email automation</h4>
+          <div class="tool-label">Make.com + Gmail</div>
+        </div>
+        <span class="step-chevron">&#9654;</span>
+      </div>
+      <div class="step-detail">
+        <p>Your doc references a "Welcome to the OG" email template (Google Doc). Set up a trigger for when a new OG member is added:</p>
+        <div class="substep"><span class="substep-num">a.</span> When a person is inserted into Supabase with tier = 'OG', fire a webhook.</div>
+        <div class="substep"><span class="substep-num">b.</span> Make.com receives the webhook, fetches the Welcome Email template, personalizes it with Claude API, creates a Gmail draft.</div>
+        <div class="substep"><span class="substep-num">c.</span> You could use a Supabase Database Webhook for this, or just add a POST to the Make.com webhook in your Bolt UI code when you add a new OG member.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+  </main>
+</div>
+
+<script>
+function showSection(sectionId) {
+  document.querySelectorAll('.scenario-section').forEach(s => s.classList.remove('active'));
+  document.getElementById(sectionId).classList.add('active');
+
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  event.currentTarget.classList.add('active');
+
+  window.scrollTo(0, 0);
+}
+
+function toggleStep(headerEl) {
+  const detail = headerEl.nextElementSibling;
+  const chevron = headerEl.querySelector('.step-chevron');
+
+  if (detail && detail.classList.contains('step-detail')) {
+    const isOpen = detail.classList.contains('open');
+    detail.classList.toggle('open');
+    if (chevron) chevron.classList.toggle('open');
+  }
+}
+
+function updateProgress() {
+  const allChecks = document.querySelectorAll('.step-check');
+  const checked = document.querySelectorAll('.step-check.checked');
+  const pct = allChecks.length > 0 ? Math.round((checked.length / allChecks.length) * 100) : 0;
+  document.getElementById('progressFill').style.width = pct + '%';
+  document.getElementById('progressLabel').textContent = checked.length + ' of ' + allChecks.length + ' steps complete';
+}
+
+updateProgress();
+</script>
+</body>
+</html>
