@@ -8,7 +8,7 @@ Works against two tables:
   - vc_portfolio_companies (VC list, manually imported from Crunchbase)
 
 Usage:
-    python job_scraper.py --all                          # both tables: discover + scrape
+    python job_scraper.py --table vc --all               # both tables: discover + scrape
     python job_scraper.py --discover                     # discover careers pages (both tables)
     python job_scraper.py --scrape                       # scrape jobs (both tables)
     python job_scraper.py --table companies --discover   # discover for machine list only
