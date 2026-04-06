@@ -1842,4 +1842,4 @@ async def main():
         jobs = scan_all_jobs()
 
     # Write GitHub Actions summary (no-op if not in Actions)
-    write_github_summary(jobs_found=jo
+    write_github_summary(jobs_found=jobs)
