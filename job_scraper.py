@@ -2,23 +2,19 @@
 """
 GT Machine Job Scraper
 ======================
-Pulls companies from the Supabase `companies` table, discovers their careers
-pages, detects ATS type, scrapes jobs, filters for target titles, and upserts
-matching jobs into the `jobs` table.
-
-Reuses the same ATS detection and scraping logic as vc_monitor.py.
-
-Required columns on `companies` table:
-    careers_url text
-    ats_type text
-    ats_slug text
-    last_scraped timestamptz
+Discovers careers pages and scrapes jobs for companies stored in Supabase.
+Works against two tables:
+  - companies (machine list)
+  - vc_portfolio_companies (VC list, manually imported from Crunchbase)
 
 Usage:
-    python job_scraper.py --all           # discover careers + scrape jobs
-    python job_scraper.py --discover      # only find careers pages for companies missing one
-    python job_scraper.py --scrape        # only scrape jobs (skip careers discovery)
-    python job_scraper.py --company 123   # scrape a single company by id
+    python job_scraper.py --all                          # both tables: discover + scrape
+    python job_scraper.py --discover                     # discover careers pages (both tables)
+    python job_scraper.py --scrape                       # scrape jobs (both tables)
+    python job_scraper.py --table companies --discover   # discover for machine list only
+    python job_scraper.py --table vc --discover          # discover for VC list only
+    python job_scraper.py --table vc --scrape            # scrape jobs for VC list only
+    python job_scraper.py --company 123                  # scrape a single company by id (companies table)
 """
 
 import argparse
@@ -506,21 +502,46 @@ def get_jobs_for_company(co: dict) -> list[dict]:
 
 
 # ----------------------------------------------------------------
+# TABLE CONFIG
+# ----------------------------------------------------------------
+
+# Maps table key to (supabase_table, name_column, jobs_table, source_label)
+TABLE_CONFIG = {
+    "companies": {
+        "table": "companies",
+        "name_col": "name",
+        "jobs_table": "jobs",
+        "source": "scraper",
+    },
+    "vc": {
+        "table": "vc_portfolio_companies",
+        "name_col": "company",
+        "jobs_table": "vc_jobs",
+        "source": "vc_scraper",
+    },
+}
+
+
+# ----------------------------------------------------------------
 # MAIN PIPELINES
 # ----------------------------------------------------------------
 
-def discover_careers():
+def discover_careers(table_key: str):
     """Find careers pages for companies that don't have one yet."""
-    rows = sb_get("companies", {
+    cfg = TABLE_CONFIG[table_key]
+    tbl = cfg["table"]
+    name_col = cfg["name_col"]
+
+    rows = sb_get(tbl, {
         "careers_url": "is.null",
-        "select": "id,name,domain",
+        "select": f"id,{name_col},domain",
     })
-    log.info(f"Discovering careers pages for {len(rows)} companies...")
+    log.info(f"[{tbl}] Discovering careers pages for {len(rows)} companies...")
 
     found = 0
     for row in rows:
         domain = row.get("domain")
-        name = row.get("name")
+        name = row.get(name_col)
         company_id = row.get("id")
         if not domain:
             continue
@@ -537,7 +558,7 @@ def discover_careers():
             ats_type, ats_slug, direct = detect_ats(resp.text, careers_url)
             careers_url = direct or careers_url
 
-        sb_patch("companies", {"id": company_id}, {
+        sb_patch(tbl, {"id": company_id}, {
             "careers_url": careers_url,
             "ats_type": ats_type,
             "ats_slug": ats_slug,
@@ -546,25 +567,31 @@ def discover_careers():
         found += 1
         time.sleep(0.5)
 
-    log.info(f"Careers discovery complete. Found {found}/{len(rows)} pages.")
+    log.info(f"[{tbl}] Careers discovery complete. Found {found}/{len(rows)} pages.")
 
 
-def scrape_jobs(company_id: Optional[int] = None):
+def scrape_jobs(table_key: str, company_id: Optional[int] = None):
     """Scrape jobs for all companies (or one specific company)."""
+    cfg = TABLE_CONFIG[table_key]
+    tbl = cfg["table"]
+    name_col = cfg["name_col"]
+    jobs_table = cfg["jobs_table"]
+    source = cfg["source"]
+
     if company_id:
-        rows = sb_get("companies", {"id": f"eq.{company_id}"})
+        rows = sb_get(tbl, {"id": f"eq.{company_id}"})
     else:
-        rows = sb_get("companies", {
+        rows = sb_get(tbl, {
             "careers_url": "not.is.null",
-            "select": "id,name,domain,careers_url,ats_type,ats_slug",
+            "select": f"id,{name_col},domain,careers_url,ats_type,ats_slug",
         })
 
-    log.info(f"Scraping jobs for {len(rows)} companies...")
+    log.info(f"[{tbl}] Scraping jobs for {len(rows)} companies...")
     now = datetime.utcnow().isoformat()
     total_matches = 0
 
     for co in rows:
-        name = co.get("name", "unknown")
+        name = co.get(name_col, "unknown")
         careers_url = co.get("careers_url")
         if not careers_url:
             continue
@@ -586,35 +613,49 @@ def scrape_jobs(company_id: Optional[int] = None):
                 continue
 
             # Check if job URL already exists
-            existing = sb_get("jobs", {"url": f"eq.{job_url}", "limit": "1"})
+            existing = sb_get(jobs_table, {"url": f"eq.{job_url}", "limit": "1"})
             if existing:
-                sb_patch("jobs", {"url": job_url}, {
+                sb_patch(jobs_table, {"url": job_url}, {
                     "last_seen": now,
                 })
             else:
-                sb_insert("jobs", {
-                    "company_id": co.get("id"),
-                    "company_name": name,
-                    "title": title,
-                    "url": job_url,
-                    "source": "scraper",
-                    "first_seen": now,
-                    "last_seen": now,
-                    "status": "new",
-                })
+                if table_key == "vc":
+                    sb_insert(jobs_table, {
+                        "company_id": co.get("id"),
+                        "title": title,
+                        "url": job_url,
+                        "location": location,
+                        "salary_text": salary_text,
+                        "vc_names": co.get("vc_names"),
+                        "source": source,
+                        "first_seen": now,
+                        "last_seen": now,
+                        "active": True,
+                    })
+                else:
+                    sb_insert(jobs_table, {
+                        "company_id": co.get("id"),
+                        "company_name": name,
+                        "title": title,
+                        "url": job_url,
+                        "source": source,
+                        "first_seen": now,
+                        "last_seen": now,
+                        "status": "new",
+                    })
                 log.info(f"  NEW: {title} at {name}")
 
             matches += 1
 
         # Update last_scraped on the company
-        sb_patch("companies", {"id": co["id"]}, {"last_scraped": now})
+        sb_patch(tbl, {"id": co["id"]}, {"last_scraped": now})
 
         if matches:
             log.info(f"  {name}: {matches} matching job(s)")
         total_matches += matches
         time.sleep(0.5)
 
-    log.info(f"Scraping complete. {total_matches} total matching jobs across {len(rows)} companies.")
+    log.info(f"[{tbl}] Scraping complete. {total_matches} total matching jobs across {len(rows)} companies.")
 
 
 # ----------------------------------------------------------------
@@ -626,22 +667,29 @@ def main():
     parser.add_argument("--all", action="store_true", help="Discover careers + scrape jobs")
     parser.add_argument("--discover", action="store_true", help="Only discover careers pages")
     parser.add_argument("--scrape", action="store_true", help="Only scrape jobs")
-    parser.add_argument("--company", type=int, help="Scrape a single company by ID")
+    parser.add_argument("--table", choices=["companies", "vc", "both"], default="both",
+                        help="Which table to run against (default: both)")
+    parser.add_argument("--company", type=int, help="Scrape a single company by ID (companies table)")
     args = parser.parse_args()
 
     if not SUPABASE_KEY:
         log.error("SUPABASE_KEY not set. Export it or pass via environment variable.")
         return
 
+    tables = ["companies", "vc"] if args.table == "both" else [args.table]
+
     if args.company:
-        scrape_jobs(company_id=args.company)
+        scrape_jobs("companies", company_id=args.company)
     elif args.discover:
-        discover_careers()
+        for t in tables:
+            discover_careers(t)
     elif args.scrape:
-        scrape_jobs()
+        for t in tables:
+            scrape_jobs(t)
     elif args.all:
-        discover_careers()
-        scrape_jobs()
+        for t in tables:
+            discover_careers(t)
+            scrape_jobs(t)
     else:
         parser.print_help()
 
