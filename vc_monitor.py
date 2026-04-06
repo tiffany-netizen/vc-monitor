@@ -156,7 +156,11 @@ class SupabaseClient:
             resp.raise_for_status()
             return True
         except Exception as e:
-            log.debug(f"Supabase INSERT {table} failed: {e}")
+            log.warning(f"Supabase INSERT {table} failed: {e}")
+            try:
+                log.warning(f"  Response body: {resp.text[:500]}")
+            except Exception:
+                pass
             return False
 
     def upsert(self, table: str, data: dict | list[dict], on_conflict: str = "id") -> bool:
@@ -1361,6 +1365,7 @@ async def scan_vc(vc: dict) -> int:
 
     log.info(f"  found {len(companies)} candidates")
     inserted = 0
+    failed = 0
 
     for co in companies:
         name = co["company_name"]
@@ -1389,7 +1394,7 @@ async def scan_vc(vc: dict) -> int:
                 {"vc_names": vc_names, "last_seen": now, "active": True}
             )
         else:
-            sb.insert(
+            ok = sb.insert(
                 "vc_portfolio_companies",
                 {
                     "company": name,
@@ -1399,12 +1404,15 @@ async def scan_vc(vc: dict) -> int:
                     "vc_contact": vc.get("contact"),
                     "active": True,
                     "excluded": False,
-                    "status": "pending",  # requires user approval before job scanning
+                    "status": "pending",
                     "first_seen": now,
                     "last_seen": now,
                 }
             )
-            inserted += 1
+            if ok:
+                inserted += 1
+            else:
+                failed += 1
 
     sb.insert(
         "vc_scan_log",
@@ -1415,7 +1423,10 @@ async def scan_vc(vc: dict) -> int:
             "status": "ok",
         }
     )
-    log.info(f"  {inserted} new companies added to Supabase")
+    if failed:
+        log.warning(f"  {inserted} inserted, {failed} FAILED to insert")
+    else:
+        log.info(f"  {inserted} new companies added to Supabase")
     return len(companies)
 
 
