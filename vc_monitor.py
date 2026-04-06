@@ -1078,9 +1078,26 @@ def scrape_vc_portfolio_static(vc: dict) -> list[dict]:
         "medium.com", "techcrunch.com",
     }
 
+    junk_names = {
+        "exit", "visit site", "visit", "view", "learn more",
+        "read more", "lp login", "sign in", "log in", "sign up",
+        "contact", "contact us", "about", "about us", "home",
+        "back to top", "subscribe", "newsletter", "blog",
+        "portfolio", "team", "careers", "press", "news",
+        "privacy", "terms", "cookie", "menu", "close",
+        "view open roles here.", "our portfolio companies.",
+        "portfolio jobs", "see all", "view all", "show more",
+        "load more", "explore", "apply now",
+    }
+    seen_names = set()
+
     for a in soup.find_all("a", href=True):
         text = a.get_text(" ", strip=True)
         if not text or len(text) < 2 or len(text) > 80:
+            continue
+        if text.lower().rstrip(".") in junk_names:
+            continue
+        if len(text.split()) > 8:
             continue
 
         full_url = urljoin(url, a["href"])
@@ -1095,7 +1112,12 @@ def scrape_vc_portfolio_static(vc: dict) -> list[dict]:
         if any(s in full_url.lower() for s in ["mailto:", "tel:", "#"]):
             continue
 
+        name_key = text.lower().strip()
+        if name_key in seen_names:
+            continue
+
         seen_domains.add(domain)
+        seen_names.add(name_key)
         companies.append({
             "company_name": text,
             "domain": domain,
@@ -1257,7 +1279,21 @@ async def scrape_vc_portfolio_playwright(vc: dict) -> list[dict]:
                 }
             """)
 
+            # Junk text patterns to skip (nav elements, exit labels, etc.)
+            junk_names = {
+                "exit", "visit site", "visit", "view", "learn more",
+                "read more", "lp login", "sign in", "log in", "sign up",
+                "contact", "contact us", "about", "about us", "home",
+                "back to top", "subscribe", "newsletter", "blog",
+                "portfolio", "team", "careers", "press", "news",
+                "privacy", "terms", "cookie", "menu", "close",
+                "view open roles here.", "our portfolio companies.",
+                "portfolio jobs", "see all", "view all", "show more",
+                "load more", "explore", "apply now",
+            }
+
             seen_domains = set()
+            seen_names = set()
             for item in links_data:
                 text = (item.get("text") or "").strip()
                 href = item.get("href") or ""
@@ -1266,17 +1302,30 @@ async def scrape_vc_portfolio_playwright(vc: dict) -> list[dict]:
 
                 if not text or len(text) < 2 or len(text) > 80:
                     continue
-                if domain and domain == vc_domain:
+                # Skip junk nav/label text
+                if text.lower().rstrip(".") in junk_names:
                     continue
-                if domain and domain in skip_domains:
+                # Skip if text looks like a sentence or description (has too many words)
+                if len(text.split()) > 8:
                     continue
-                if domain and domain in seen_domains:
+                # Must have a domain; entries without one are unusable
+                if not domain:
+                    continue
+                if domain == vc_domain:
+                    continue
+                if domain in skip_domains:
+                    continue
+                if domain in seen_domains:
                     continue
                 if any(s in href.lower() for s in ["mailto:", "tel:", "javascript:"]):
                     continue
+                # Skip duplicate company names (catches same company from different elements)
+                name_key = text.lower().strip()
+                if name_key in seen_names:
+                    continue
 
-                if domain:
-                    seen_domains.add(domain)
+                seen_domains.add(domain)
+                seen_names.add(name_key)
 
                 companies.append({
                     "company_name": text,
@@ -1404,6 +1453,7 @@ async def scan_vc(vc: dict) -> int:
                     "vc_contact": vc.get("contact"),
                     "active": True,
                     "excluded": False,
+                    "enriched": False,
                     "status": "pending",
                     "first_seen": now,
                     "last_seen": now,
@@ -1792,21 +1842,4 @@ async def main():
         jobs = scan_all_jobs()
 
     # Write GitHub Actions summary (no-op if not in Actions)
-    write_github_summary(jobs_found=jobs)
-
-    if args.report or run_all:
-        print(f"\n{'═'*65}")
-        print(f"  {len(jobs)} matching roles found")
-        print(f"{'═'*65}")
-        for j in jobs:
-            print(f"\n  Title:   {j['title']}")
-            print(f"  Company: {j['company']}  [{j['stage']}]")
-            print(f"  VCs:     {j['vcs_invested']}")
-            print(f"  Salary:  {j['salary']}")
-            print(f"  Loc:     {j['location']}")
-            print(f"  URL:     {j['url']}")
-        print()
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    write_github_summary(jobs_found=jo
