@@ -460,11 +460,151 @@ def scrape_ashby(slug: str) -> list[dict]:
         return []
 
 
-def scrape_generic(careers_url: str) -> list[dict]:
-    resp = safe_get(careers_url)
+def scrape_smartrecruiters(slug: str) -> list[dict]:
+    """SmartRecruiters public API."""
+    url = f"https://api.smartrecruiters.com/v1/companies/{slug}/postings"
+    jobs = []
+    offset = 0
+    while True:
+        resp = safe_get(f"{url}?offset={offset}&limit=100")
+        if not resp:
+            break
+        try:
+            data = resp.json()
+            postings = data.get("content", [])
+            if not postings:
+                break
+            for p in postings:
+                loc = p.get("location", {})
+                city = loc.get("city", "")
+                region = loc.get("region", "")
+                country = loc.get("country", "")
+                location = ", ".join(part for part in [city, region, country] if part)
+                comp = p.get("compensation", {})
+                salary_text = ""
+                if comp:
+                    sal_min = comp.get("min", "")
+                    sal_max = comp.get("max", "")
+                    currency = comp.get("currency", "")
+                    if sal_min or sal_max:
+                        salary_text = f"{currency} {sal_min}-{sal_max}".strip()
+                jobs.append({
+                    "title": p.get("name", ""),
+                    "location": location,
+                    "url": p.get("ref", "") or f"https://careers.smartrecruiters.com/{slug}/{p.get('id', '')}",
+                    "salary_text": salary_text,
+                })
+            if len(postings) < 100:
+                break
+            offset += 100
+        except Exception as e:
+            log.debug(f"SmartRecruiters parse error ({slug}): {e}")
+            break
+    return jobs
+
+
+def scrape_workday(slug: str, careers_url: str = "") -> list[dict]:
+    """Workday JSON API scraper. Tries to extract the site name from the careers_url."""
+    # Workday URLs look like: company.wd5.myworkdayjobs.com/en-US/External
+    # We need both the company slug and the site path
+    site = "External"  # most common default
+    wd_num = "1"
+    if careers_url:
+        m = re.search(r"([a-zA-Z0-9-]+)\.wd(\d+)\.myworkdayjobs\.com(?:/[a-z-]+)?/([^/?\s]+)", careers_url, re.I)
+        if m:
+            slug = m.group(1)
+            wd_num = m.group(2)
+            site = m.group(3)
+        else:
+            m2 = re.search(r"([a-zA-Z0-9-]+)\.wd(\d+)\.myworkdayjobs\.com", careers_url, re.I)
+            if m2:
+                slug = m2.group(1)
+                wd_num = m2.group(2)
+
+    api_url = f"https://{slug}.wd{wd_num}.myworkdayjobs.com/wday/cxs/{slug}/{site}/jobs"
+    payload = {"appliedFacets": {}, "limit": 20, "offset": 0, "searchText": ""}
+    jobs = []
+    try:
+        resp = requests.post(api_url, json=payload, headers=HEADERS_BROWSER, timeout=15)
+        if resp.status_code != 200:
+            log.debug(f"Workday API returned {resp.status_code} for {slug}")
+            return []
+        data = resp.json()
+        total = data.get("total", 0)
+        for posting in data.get("jobPostings", []):
+            title = posting.get("title", "")
+            loc = posting.get("locationsText", "") or posting.get("bulletFields", [""])[0]
+            ext_path = posting.get("externalPath", "")
+            job_url = f"https://{slug}.wd{wd_num}.myworkdayjobs.com/en-US/{site}{ext_path}" if ext_path else ""
+            jobs.append({"title": title, "location": loc, "url": job_url, "salary_text": ""})
+
+        # Paginate if there are more
+        offset = 20
+        while offset < total:
+            payload["offset"] = offset
+            resp = requests.post(api_url, json=payload, headers=HEADERS_BROWSER, timeout=15)
+            if resp.status_code != 200:
+                break
+            for posting in resp.json().get("jobPostings", []):
+                title = posting.get("title", "")
+                loc = posting.get("locationsText", "") or posting.get("bulletFields", [""])[0]
+                ext_path = posting.get("externalPath", "")
+                job_url = f"https://{slug}.wd{wd_num}.myworkdayjobs.com/en-US/{site}{ext_path}" if ext_path else ""
+                jobs.append({"title": title, "location": loc, "url": job_url, "salary_text": ""})
+            offset += 20
+    except Exception as e:
+        log.debug(f"Workday parse error ({slug}): {e}")
+    return jobs
+
+
+def scrape_rippling(slug: str) -> list[dict]:
+    """Rippling public job board API."""
+    url = f"https://api.rippling.com/platform/api/ats/v1/board/{slug}/jobs"
+    resp = safe_get(url)
     if not resp:
         return []
-    soup = BeautifulSoup(resp.text, "lxml")
+    try:
+        data = resp.json()
+        jobs = []
+        for j in data if isinstance(data, list) else data.get("jobs", []):
+            location = j.get("location", "") or j.get("workLocation", "")
+            jobs.append({
+                "title": j.get("title", "") or j.get("name", ""),
+                "location": location,
+                "url": j.get("url", "") or f"https://app.rippling.com/jobs/{slug}/{j.get('id', '')}",
+                "salary_text": j.get("salary", "") or "",
+            })
+        return jobs
+    except Exception as e:
+        log.debug(f"Rippling parse error ({slug}): {e}")
+        return []
+
+
+def scrape_dover(slug: str) -> list[dict]:
+    """Dover public job board API."""
+    url = f"https://app.dover.com/api/careers-page/{slug}/jobs"
+    resp = safe_get(url)
+    if not resp:
+        return []
+    try:
+        data = resp.json()
+        jobs_list = data if isinstance(data, list) else data.get("jobs", [])
+        jobs = []
+        for j in jobs_list:
+            jobs.append({
+                "title": j.get("title", "") or j.get("name", ""),
+                "location": j.get("location", ""),
+                "url": j.get("url", "") or f"https://app.dover.com/apply/{slug}/{j.get('id', '')}",
+                "salary_text": j.get("salary_range", "") or "",
+            })
+        return jobs
+    except Exception as e:
+        log.debug(f"Dover parse error ({slug}): {e}")
+        return []
+
+
+def _extract_jobs_from_soup(soup: BeautifulSoup, careers_url: str) -> list[dict]:
+    """Shared logic for extracting jobs from a parsed HTML page."""
     jobs = []
     seen = set()
 
@@ -517,6 +657,35 @@ def scrape_generic(careers_url: str) -> list[dict]:
     return jobs
 
 
+def scrape_generic(careers_url: str) -> list[dict]:
+    """Scrape jobs from a non-ATS careers page. Falls back to Playwright for JS-rendered pages."""
+    resp = safe_get(careers_url)
+    if not resp:
+        return []
+    soup = BeautifulSoup(resp.text, "lxml")
+    jobs = _extract_jobs_from_soup(soup, careers_url)
+
+    # Fallback: if static HTML found nothing, try rendering with Playwright
+    if not jobs:
+        try:
+            from playwright.sync_api import sync_playwright
+            log.info(f"  Trying Playwright fallback for {careers_url}")
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True)
+                page = browser.new_page()
+                page.goto(careers_url, wait_until="networkidle", timeout=20000)
+                html = page.content()
+                browser.close()
+            soup = BeautifulSoup(html, "lxml")
+            jobs = _extract_jobs_from_soup(soup, careers_url)
+        except ImportError:
+            log.debug("Playwright not installed, skipping JS fallback")
+        except Exception as e:
+            log.debug(f"Playwright fallback failed for {careers_url}: {e}")
+
+    return jobs
+
+
 def get_jobs_for_company(co: dict) -> list[dict]:
     ats_type = co.get("ats_type")
     slug = co.get("ats_slug")
@@ -528,6 +697,18 @@ def get_jobs_for_company(co: dict) -> list[dict]:
         return scrape_lever(slug)
     if ats_type == "ashby" and slug:
         return scrape_ashby(slug)
+    if ats_type == "smartrec" and slug:
+        return scrape_smartrecruiters(slug)
+    if ats_type == "workday" and slug:
+        return scrape_workday(slug, careers_url)
+    if ats_type == "rippling" and slug:
+        return scrape_rippling(slug)
+    if ats_type == "dover" and slug:
+        return scrape_dover(slug)
+
+    if ats_type and ats_type not in ("greenhouse", "lever", "ashby", "smartrec", "workday", "rippling", "dover"):
+        log.warning(f"  No dedicated scraper for ATS '{ats_type}' (slug: {slug}), falling back to generic")
+
     if careers_url:
         return scrape_generic(careers_url)
     return []
@@ -655,6 +836,10 @@ def scrape_jobs(table_key: str, company_id: Optional[int] = None, og_only: bool 
             continue
 
         jobs = get_jobs_for_company(co)
+        if not jobs:
+            log.warning(f"  {name}: 0 jobs returned (ATS: {co.get('ats_type') or 'generic'}, URL: {careers_url})")
+        else:
+            log.info(f"  {name}: {len(jobs)} total jobs found (ATS: {co.get('ats_type') or 'generic'})")
         matches = 0
 
         for job in jobs:
