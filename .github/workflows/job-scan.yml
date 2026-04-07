@@ -1,6 +1,6 @@
 # .github/workflows/job-scan.yml
-# Mon + Thu: Scrapes jobs from vc_portfolio_companies and OG member companies.
-# Discovers careers pages, then scrapes matching jobs into jobs/vc_jobs tables.
+# Mon + Thu: Scrapes jobs from companies that already have a careers page.
+# Does NOT re-discover careers pages — run the discover workflow for that.
 
 name: GT Job Scraper
 
@@ -32,13 +32,15 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install requests beautifulsoup4 lxml
+        run: |
+          pip install requests beautifulsoup4 lxml playwright
+          playwright install chromium --with-deps
 
-      - name: Discover + scrape VC portfolio companies
+      - name: Scrape VC portfolio companies
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-        run: python job_scraper.py --table vc --all
+        run: python job_scraper.py --table vc --scrape
 
   scrape-og:
     runs-on: ubuntu-latest
@@ -53,10 +55,12 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install requests beautifulsoup4 lxml
+        run: |
+          pip install requests beautifulsoup4 lxml playwright
+          playwright install chromium --with-deps
 
-      - name: Discover + scrape OG member companies
+      - name: Scrape OG member companies
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-        run: python job_scraper.py --table companies --og-only --all
+        run: python job_scraper.py --table companies --og-only --scrape
