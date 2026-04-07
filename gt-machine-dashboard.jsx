@@ -1,24 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
 import { Search, Users, Briefcase, AlertCircle, ChevronDown, ChevronUp, ExternalLink, RefreshCw, Filter, X } from "lucide-react";
+import { getJobsEmptyState, supaFetch } from "./dashboard-data.mjs";
 
 // ─── CONFIG ──────────────────────────────────────────
 // IMPORTANT: Use the anon key here (not service_role). Set via environment variable at build time.
 // The anon key is safe for client-side use when combined with Row Level Security (RLS) policies.
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || "https://jhreeyesdtnmanolmjqu.supabase.co/rest/v1";
-const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
-
-const headers = {
-  apikey: SUPABASE_KEY,
-  Authorization: `Bearer ${SUPABASE_KEY}`,
-  "Content-Type": "application/json",
-};
-
-async function supaFetch(path) {
-  const res = await fetch(`${SUPABASE_URL}${path}`, { headers: { ...headers, Prefer: "count=exact" } });
-  const count = res.headers.get("content-range")?.split("/")[1] || "0";
-  const data = await res.json();
-  return { data, count: parseInt(count) };
-}
 
 // ─── MAIN APP ────────────────────────────────────────
 export default function Dashboard() {
@@ -35,6 +21,7 @@ export default function Dashboard() {
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState("");
   const PAGE_SIZE = 25;
 
   const loadStats = useCallback(async () => {
@@ -70,17 +57,49 @@ export default function Dashboard() {
   }, [sortCol, sortDir, page, statusFilter, search]);
 
   useEffect(() => {
-    loadStats().then(() => setLoading(false));
+    let active = true;
+
+    loadStats()
+      .then(() => {
+        if (!active) {
+          return;
+        }
+        setError("");
+        setLoading(false);
+      })
+      .catch((err) => {
+        if (!active) {
+          return;
+        }
+        setError(err.message || "Failed to load dashboard data.");
+        setLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
   }, [loadStats]);
 
   useEffect(() => {
-    if (!loading) loadPeople();
+    if (loading) {
+      return;
+    }
+
+    loadPeople().catch((err) => {
+      setError(err.message || "Failed to load contacts.");
+    });
   }, [loadPeople, loading]);
 
   const refresh = async () => {
     setRefreshing(true);
-    await Promise.all([loadStats(), loadPeople()]);
-    setRefreshing(false);
+    try {
+      await Promise.all([loadStats(), loadPeople()]);
+      setError("");
+    } catch (err) {
+      setError(err.message || "Failed to refresh dashboard data.");
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   const handleSort = (col) => {
@@ -96,6 +115,22 @@ export default function Dashboard() {
   );
 
   const totalPages = Math.ceil(peopleCount / PAGE_SIZE);
+  const jobsEmptyState = getJobsEmptyState(jobs);
+
+  if (error) return (
+    <div className="min-h-screen bg-gray-950 flex items-center justify-center px-6">
+      <div className="max-w-lg rounded-2xl border border-red-900/50 bg-red-950/20 p-6 text-center">
+        <div className="text-lg font-semibold text-red-200">Dashboard load failed</div>
+        <p className="mt-2 text-sm text-red-300">{error}</p>
+        <button
+          onClick={refresh}
+          className="mt-4 rounded-lg bg-red-900/40 px-4 py-2 text-sm font-medium text-red-100 hover:bg-red-900/60"
+        >
+          Retry
+        </button>
+      </div>
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100">
@@ -172,7 +207,7 @@ export default function Dashboard() {
                   <button onClick={() => setTab("jobs")} className="text-xs text-blue-400 hover:text-blue-300">View all</button>
                 </div>
                 <div className="space-y-2">
-                  {jobs.length === 0 && <p className="text-gray-500 text-sm">No jobs tracked yet.</p>}
+                  {jobsEmptyState && <p className="text-gray-500 text-sm">{jobsEmptyState}</p>}
                   {jobs.filter(j => j.dna_fit).slice(0, 8).map(j => (
                     <div key={j.id} className="flex items-center justify-between py-2 px-3 rounded-lg hover:bg-gray-800/50 transition-colors">
                       <div className="min-w-0">

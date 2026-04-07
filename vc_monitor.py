@@ -75,7 +75,7 @@ import logging
 import os
 import re
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urljoin, urlparse
@@ -132,11 +132,21 @@ class SupabaseClient:
         params = {"limit": limit}
         for key, val in filters.items():
             if isinstance(val, bool):
-                params[f"{key}=eq.{str(val).lower()}"] = None
-            elif isinstance(val, str):
-                params[f"{key}=eq.{val}"] = None
-            else:
-                params[f"{key}=eq.{val}"] = None
+                params[key] = f"eq.{str(val).lower()}"
+                continue
+
+            if val is None:
+                params[key] = "is.null"
+                continue
+
+            if isinstance(val, str):
+                if re.match(r"^(eq|neq|gt|gte|lt|lte|like|ilike|is|in|cs|cd|ov|sl|sr|nxr|nxl|adj|fts|plfts|phfts|wfts|not)\.", val):
+                    params[key] = val
+                else:
+                    params[key] = f"eq.{val}"
+                continue
+
+            params[key] = f"eq.{val}"
 
         try:
             resp = requests.get(url, headers=self.headers, params=params, timeout=15)
@@ -1414,7 +1424,7 @@ def _extract_companies_from_api(
 
 async def scan_vc(vc: dict) -> int:
     """Scan one VC portfolio page and upsert results into Supabase."""
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(UTC).isoformat()
     log.info(f"▸ {vc['name']}  →  {vc['portfolio_url']}")
 
     if vc.get("js_required", True):
@@ -1626,7 +1636,7 @@ def scan_all_jobs() -> list[dict]:
         return []
 
     log.info(f"Scanning jobs for {len(rows)} companies...")
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(UTC).isoformat()
     matching = []
 
     for co in rows:
