@@ -29,12 +29,14 @@ import logging
 import os
 import re
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Optional
 from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
+
+from env_loader import load_local_env
 
 logging.basicConfig(
     level=logging.INFO,
@@ -46,6 +48,8 @@ log = logging.getLogger(__name__)
 # ----------------------------------------------------------------
 # SUPABASE CONFIG
 # ----------------------------------------------------------------
+
+load_local_env()
 
 SUPABASE_URL = os.environ.get(
     "SUPABASE_URL",
@@ -143,6 +147,10 @@ def sb_insert(table: str, data: dict) -> bool:
     except Exception as e:
         log.debug(f"Supabase INSERT {table} failed: {e}")
         return False
+
+
+def log_write_failure(action: str, table: str, context: str):
+    log.error(f"Supabase {action} failed for {table}: {context}")
 
 
 # ----------------------------------------------------------------
@@ -783,7 +791,8 @@ def discover_careers(table_key: str, og_only: bool = False):
         careers_url = find_careers_url(domain)
         if not careers_url:
             log.debug(f"  No careers page: {name} ({domain})")
-            sb_patch(tbl, {"id": company_id}, {"careers_url": "none"})
+            if not sb_patch(tbl, {"id": company_id}, {"careers_url": "none"}):
+                log_write_failure("PATCH", tbl, f"company={name} id={company_id} careers_url=none")
             continue
 
         # Detect ATS
@@ -793,11 +802,16 @@ def discover_careers(table_key: str, og_only: bool = False):
             ats_type, ats_slug, direct = detect_ats(resp.text, careers_url)
             careers_url = direct or careers_url
 
-        sb_patch(tbl, {"id": company_id}, {
+        if not sb_patch(tbl, {"id": company_id}, {
             "careers_url": careers_url,
             "ats_type": ats_type,
             "ats_slug": ats_slug,
-        })
+        }):
+            log_write_failure(
+                "PATCH",
+                tbl,
+                f"company={name} id={company_id} careers_url={careers_url} ats_type={ats_type or 'unknown'}",
+            )
         log.info(f"  Found: {name} -> {careers_url} [ATS: {ats_type or 'unknown'}]")
         found += 1
         time.sleep(0.5)
@@ -826,7 +840,7 @@ def scrape_jobs(table_key: str, company_id: Optional[int] = None, og_only: bool 
         rows = sb_get(tbl, params)
 
     log.info(f"[{tbl}] Scraping jobs for {len(rows)} companies...")
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(UTC).isoformat()
     total_matches = 0
 
     for co in rows:
@@ -858,12 +872,17 @@ def scrape_jobs(table_key: str, company_id: Optional[int] = None, og_only: bool 
             # Check if job URL already exists
             existing = sb_get(jobs_table, {"url": f"eq.{job_url}", "limit": "1"})
             if existing:
-                sb_patch(jobs_table, {"url": job_url}, {
+                update_payload = {
                     "last_seen": now,
-                })
+                }
+                if table_key == "companies":
+                    update_payload["dna_fit"] = True
+
+                if not sb_patch(jobs_table, {"url": job_url}, update_payload):
+                    log_write_failure("PATCH", jobs_table, f"company={name} url={job_url}")
             else:
                 if table_key == "vc":
-                    sb_insert(jobs_table, {
+                    if not sb_insert(jobs_table, {
                         "company_id": co.get("id"),
                         "title": title,
                         "url": job_url,
@@ -874,9 +893,10 @@ def scrape_jobs(table_key: str, company_id: Optional[int] = None, og_only: bool 
                         "first_seen": now,
                         "last_seen": now,
                         "active": True,
-                    })
+                    }):
+                        log_write_failure("INSERT", jobs_table, f"company={name} title={title} url={job_url}")
                 else:
-                    sb_insert(jobs_table, {
+                    if not sb_insert(jobs_table, {
                         "company_id": co.get("id"),
                         "company_name": name,
                         "title": title,
@@ -884,14 +904,35 @@ def scrape_jobs(table_key: str, company_id: Optional[int] = None, og_only: bool 
                         "source": source,
                         "first_seen": now,
                         "last_seen": now,
+                        "dna_fit": True,
                         "status": "new",
-                    })
+                    }):
+                        log_write_failure("INSERT", jobs_table, f"company={name} title={title} url={job_url}")
                 log.info(f"  NEW: {title} at {name}")
+
+            if table_key == "vc":
+                existing_main = sb_get("jobs", {"url": f"eq.{job_url}", "limit": "1"})
+                if existing_main:
+                    if not sb_patch("jobs", {"url": job_url}, {"last_seen": now, "dna_fit": True}):
+                        log_write_failure("PATCH", "jobs", f"company={name} url={job_url}")
+                else:
+                    if not sb_insert("jobs", {
+                        "company_name": name,
+                        "title": title,
+                        "url": job_url,
+                        "source": source,
+                        "first_seen": now,
+                        "last_seen": now,
+                        "dna_fit": True,
+                        "status": "new",
+                    }):
+                        log_write_failure("INSERT", "jobs", f"company={name} title={title} url={job_url}")
 
             matches += 1
 
         # Update last_scraped on the company
-        sb_patch(tbl, {"id": co["id"]}, {"last_scraped": now})
+        if not sb_patch(tbl, {"id": co["id"]}, {"last_scraped": now}):
+            log_write_failure("PATCH", tbl, f"company={name} id={co['id']} last_scraped={now}")
 
         if matches:
             log.info(f"  {name}: {matches} matching job(s)")

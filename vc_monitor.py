@@ -75,13 +75,15 @@ import logging
 import os
 import re
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urljoin, urlparse
 
 import requests
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, FeatureNotFound
+
+from env_loader import load_local_env
 
 logging.basicConfig(
     level=logging.INFO,
@@ -93,6 +95,8 @@ log = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────────────────
 # SUPABASE CONFIGURATION
 # ─────────────────────────────────────────────────────────────────────
+
+load_local_env()
 
 SUPABASE_URL = os.environ.get(
     "SUPABASE_URL",
@@ -132,11 +136,21 @@ class SupabaseClient:
         params = {"limit": limit}
         for key, val in filters.items():
             if isinstance(val, bool):
-                params[f"{key}=eq.{str(val).lower()}"] = None
-            elif isinstance(val, str):
-                params[f"{key}=eq.{val}"] = None
-            else:
-                params[f"{key}=eq.{val}"] = None
+                params[key] = f"eq.{str(val).lower()}"
+                continue
+
+            if val is None:
+                params[key] = "is.null"
+                continue
+
+            if isinstance(val, str):
+                if re.match(r"^(eq|neq|gt|gte|lt|lte|like|ilike|is|in|cs|cd|ov|sl|sr|nxr|nxl|adj|fts|plfts|phfts|wfts|not)\.", val):
+                    params[key] = val
+                else:
+                    params[key] = f"eq.{val}"
+                continue
+
+            params[key] = f"eq.{val}"
 
         try:
             resp = requests.get(url, headers=self.headers, params=params, timeout=15)
@@ -685,6 +699,14 @@ def safe_get(url: str, timeout: int = 15) -> Optional[requests.Response]:
         return None
 
 
+def parse_html(html: str) -> BeautifulSoup:
+    """Use lxml when available, otherwise fall back to stdlib parser."""
+    try:
+        return BeautifulSoup(html, "lxml")
+    except FeatureNotFound:
+        return BeautifulSoup(html, "html.parser")
+
+
 # ─────────────────────────────────────────────────────────────────────
 # CAREERS PAGE DETECTION
 # ─────────────────────────────────────────────────────────────────────
@@ -756,7 +778,7 @@ def find_careers_url(company_domain: str) -> Optional[str]:
         url = base + path
         resp = safe_get(url, timeout=8)
         if resp and resp.status_code == 200 and len(resp.text) > 300:
-            soup = BeautifulSoup(resp.text, "lxml")
+            soup = parse_html(resp.text)
             text = soup.get_text().lower()
             job_signals = [
                 "open role", "open position", "join our team",
@@ -773,7 +795,7 @@ def find_careers_url(company_domain: str) -> Optional[str]:
     # 2. Scan homepage for careers links
     resp = safe_get(base, timeout=10)
     if resp:
-        soup = BeautifulSoup(resp.text, "lxml")
+        soup = parse_html(resp.text)
         careers_kw = ["career", "job", "hiring", "join us", "work with us", "open role"]
         for link in soup.find_all("a", href=True):
             href = link["href"].lower()
@@ -859,7 +881,7 @@ def scrape_lever(slug: str) -> list[dict]:
             for lst in j.get("lists", []):
                 lst_text = lst.get("text", "").lower()
                 if "salary" in lst_text or "compensation" in lst_text or "pay" in lst_text:
-                    salary_text = BeautifulSoup(lst.get("content", ""), "lxml").get_text(" ")
+                    salary_text = parse_html(lst.get("content", "")).get_text(" ")
 
             # Check plain text content
             if not salary_text:
@@ -945,7 +967,7 @@ def scrape_generic(careers_url: str) -> list[dict]:
     if not resp:
         return []
 
-    soup = BeautifulSoup(resp.text, "lxml")
+    soup = parse_html(resp.text)
     jobs = []
     seen = set()
 
@@ -1077,7 +1099,7 @@ def scrape_vc_portfolio_static(vc: dict) -> list[dict]:
         log.warning(f"  Could not fetch {url}")
         return []
 
-    soup = BeautifulSoup(resp.text, "lxml")
+    soup = parse_html(resp.text)
     vc_domain = get_domain(url)
     seen_domains = set()
     companies = []
@@ -1414,7 +1436,7 @@ def _extract_companies_from_api(
 
 async def scan_vc(vc: dict) -> int:
     """Scan one VC portfolio page and upsert results into Supabase."""
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(UTC).isoformat()
     log.info(f"▸ {vc['name']}  →  {vc['portfolio_url']}")
 
     if vc.get("js_required", True):
@@ -1505,13 +1527,13 @@ async def scan_all_vcs():
 # ─────────────────────────────────────────────────────────────────────
 
 def discover_careers_pages():
-    """For approved companies missing a careers URL, attempt to find one."""
+    """For approved/active companies missing a careers URL, attempt to find one."""
     url = f"{SUPABASE_URL}/vc_portfolio_companies"
     params = {
         "careers_url": "is.null",
         "active": "eq.true",
         "excluded": "eq.false",
-        "status": "eq.approved",
+        "status": "in.(approved,active)",
         "limit": 1000,
     }
     try:
@@ -1603,17 +1625,66 @@ def enrich_stages():
         time.sleep(0.3)  # polite crawling
 
 
+def approve_pending_companies() -> int:
+    """Approve active, non-excluded companies with pending or null status."""
+    rows_pending = sb.select_where(
+        "vc_portfolio_companies",
+        {
+            "active": "eq.true",
+            "excluded": "eq.false",
+            "status": "eq.pending",
+        },
+        limit=1000,
+    )
+    rows_null = sb.select_where(
+        "vc_portfolio_companies",
+        {
+            "active": "eq.true",
+            "excluded": "eq.false",
+            "status": "is.null",
+        },
+        limit=1000,
+    )
+
+    # Dedupe by id in case the backing API behavior changes.
+    dedup: dict[int, dict] = {}
+    for row in rows_pending + rows_null:
+        company_id = row.get("id")
+        if company_id is None:
+            continue
+        dedup[int(company_id)] = row
+    rows = list(dedup.values())
+
+    if not rows:
+        log.info("No pending/null-status companies found to approve.")
+        return 0
+
+    approved = 0
+    for row in rows:
+        company_id = row.get("id")
+        company = row.get("company") or "(unknown)"
+        if not company_id:
+            continue
+
+        if sb.update("vc_portfolio_companies", {"id": company_id}, {"status": "approved"}):
+            approved += 1
+            log.info(f"  Approved: {company}")
+
+    log.info(f"Approved {approved}/{len(rows)} pending/null-status companies.")
+    return approved
+
+
 # ─────────────────────────────────────────────────────────────────────
 # JOB SCANNING PIPELINE
 # ─────────────────────────────────────────────────────────────────────
 
 def scan_all_jobs() -> list[dict]:
-    """Scan jobs for approved, active portfolio companies."""
+    """Scan jobs for approved/active, non-excluded portfolio companies."""
     url = f"{SUPABASE_URL}/vc_portfolio_companies"
     params = {
         "active": "eq.true",
         "excluded": "eq.false",
-        "status": "eq.approved",
+        "status": "in.(approved,active)",
         "careers_url": "not.is.null",
         "limit": 1000,
     }
@@ -1626,7 +1697,7 @@ def scan_all_jobs() -> list[dict]:
         return []
 
     log.info(f"Scanning jobs for {len(rows)} companies...")
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(UTC).isoformat()
     matching = []
 
     for co in rows:
@@ -1702,7 +1773,7 @@ def scan_all_jobs() -> list[dict]:
             # Cross-post to the main jobs table so it appears in the dashboard
             existing_main = sb.get_by_url(job_url, "jobs")
             if existing_main:
-                sb.update("jobs", {"url": job_url}, {"last_seen": now})
+                sb.update("jobs", {"url": job_url}, {"last_seen": now, "dna_fit": True})
             else:
                 sb.insert(
                     "jobs",
@@ -1710,7 +1781,7 @@ def scan_all_jobs() -> list[dict]:
                         "company_name": co["company"],
                         "title": title,
                         "url": job_url,
-                        "source": "vc_monitor",
+                        "dna_fit": True,
                         "first_seen": now,
                         "last_seen": now,
                         "status": "new",
@@ -1814,8 +1885,9 @@ async def main():
     )
     parser.add_argument("--scan-vcs",      action="store_true", help="Scrape VC portfolio pages")
     parser.add_argument("--enrich-stages", action="store_true", help="Lookup funding stages via Crunchbase")
-    parser.add_argument("--find-careers",  action="store_true", help="Discover company careers pages (approved companies only)")
-    parser.add_argument("--scan-jobs",     action="store_true", help="Scrape job listings (approved companies only)")
+    parser.add_argument("--approve-pending", action="store_true", help="Set pending/null-status companies to approved (active + not excluded)")
+    parser.add_argument("--find-careers",  action="store_true", help="Discover company careers pages (approved/active companies)")
+    parser.add_argument("--scan-jobs",     action="store_true", help="Scrape job listings (approved/active companies)")
     parser.add_argument("--report",        action="store_true", help="Export results from Supabase")
     parser.add_argument("--all",           action="store_true", help="Run full pipeline")
     parser.add_argument("--test-ats",      nargs="+", metavar="TYPE:SLUG",
@@ -1835,7 +1907,7 @@ async def main():
         return
 
     run_all = args.all or not any(
-        [args.scan_vcs, args.enrich_stages, args.find_careers, args.scan_jobs, args.report]
+        [args.scan_vcs, args.enrich_stages, args.approve_pending, args.find_careers, args.scan_jobs, args.report]
     )
 
     if args.scan_vcs or run_all:
@@ -1843,6 +1915,9 @@ async def main():
 
     if args.enrich_stages or run_all:
         enrich_stages()
+
+    if args.approve_pending:
+        approve_pending_companies()
 
     if args.find_careers or run_all:
         discover_careers_pages()
