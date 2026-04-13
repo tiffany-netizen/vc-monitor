@@ -872,9 +872,13 @@ def scrape_jobs(table_key: str, company_id: Optional[int] = None, og_only: bool 
             # Check if job URL already exists
             existing = sb_get(jobs_table, {"url": f"eq.{job_url}", "limit": "1"})
             if existing:
-                if not sb_patch(jobs_table, {"url": job_url}, {
+                update_payload = {
                     "last_seen": now,
-                }):
+                }
+                if table_key == "companies":
+                    update_payload["dna_fit"] = True
+
+                if not sb_patch(jobs_table, {"url": job_url}, update_payload):
                     log_write_failure("PATCH", jobs_table, f"company={name} url={job_url}")
             else:
                 if table_key == "vc":
@@ -900,6 +904,7 @@ def scrape_jobs(table_key: str, company_id: Optional[int] = None, og_only: bool 
                         "source": source,
                         "first_seen": now,
                         "last_seen": now,
+                        "dna_fit": True,
                         "status": "new",
                     }):
                         log_write_failure("INSERT", jobs_table, f"company={name} title={title} url={job_url}")
@@ -908,7 +913,7 @@ def scrape_jobs(table_key: str, company_id: Optional[int] = None, og_only: bool 
             if table_key == "vc":
                 existing_main = sb_get("jobs", {"url": f"eq.{job_url}", "limit": "1"})
                 if existing_main:
-                    if not sb_patch("jobs", {"url": job_url}, {"last_seen": now}):
+                    if not sb_patch("jobs", {"url": job_url}, {"last_seen": now, "dna_fit": True}):
                         log_write_failure("PATCH", "jobs", f"company={name} url={job_url}")
                 else:
                     if not sb_insert("jobs", {
@@ -918,6 +923,7 @@ def scrape_jobs(table_key: str, company_id: Optional[int] = None, og_only: bool 
                         "source": source,
                         "first_seen": now,
                         "last_seen": now,
+                        "dna_fit": True,
                         "status": "new",
                     }):
                         log_write_failure("INSERT", "jobs", f"company={name} title={title} url={job_url}")

@@ -1773,7 +1773,7 @@ def scan_all_jobs() -> list[dict]:
             # Cross-post to the main jobs table so it appears in the dashboard
             existing_main = sb.get_by_url(job_url, "jobs")
             if existing_main:
-                sb.update("jobs", {"url": job_url}, {"last_seen": now})
+                sb.update("jobs", {"url": job_url}, {"last_seen": now, "dna_fit": True})
             else:
                 sb.insert(
                     "jobs",
@@ -1781,6 +1781,7 @@ def scan_all_jobs() -> list[dict]:
                         "company_name": co["company"],
                         "title": title,
                         "url": job_url,
+                        "dna_fit": True,
                         "first_seen": now,
                         "last_seen": now,
                         "status": "new",

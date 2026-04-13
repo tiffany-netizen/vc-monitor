@@ -71,6 +71,7 @@ def test_scrape_jobs_companies_inserts_only_matching_roles(monkeypatch):
     assert len(job_rows) == 1
     assert job_rows[0]["title"] == "VP of Operations"
     assert job_rows[0]["company_name"] == "Acme"
+    assert job_rows[0]["dna_fit"] is True
 
     assert any(
         table == "companies" and filters == {"id": 11} and "last_scraped" in data
@@ -121,6 +122,7 @@ def test_scrape_jobs_existing_url_updates_instead_of_inserting(monkeypatch):
     assert len(job_updates) == 1
     assert job_updates[0][0] == {"url": "https://acme.com/jobs/vp-ops-us"}
     assert "last_seen" in job_updates[0][1]
+    assert job_updates[0][1]["dna_fit"] is True
 
 
 def test_scrape_jobs_vc_writes_to_vc_jobs_table(monkeypatch):
@@ -205,6 +207,153 @@ def test_scrape_jobs_vc_also_mirrors_into_jobs_for_dashboard(monkeypatch):
 
     assert any(table == "vc_jobs" for table, _ in inserts)
     assert any(table == "jobs" for table, _ in inserts)
+    mirrored_jobs = [row for table, row in inserts if table == "jobs"]
+    assert len(mirrored_jobs) == 1
+    assert mirrored_jobs[0]["dna_fit"] is True
+
+
+def test_scrape_jobs_vc_existing_mirror_updates_dna_fit(monkeypatch):
+    fake_vc_companies = [
+        {
+            "id": 99,
+            "company": "Portco Three",
+            "domain": "portco.three",
+            "careers_url": "https://jobs.portco.three",
+            "ats_type": "generic",
+            "ats_slug": None,
+            "vc_names": ["Example VC"],
+        }
+    ]
+    fake_jobs = [
+        {
+            "title": "Head of Finance",
+            "location": "Remote - US",
+            "salary_text": "$260,000",
+            "url": "https://jobs.portco.three/hof",
+        }
+    ]
+
+    patches = []
+
+    def fake_sb_get(table, params, limit=1000):
+        if table == "vc_portfolio_companies" and "select" in params:
+            return fake_vc_companies
+        if table == "vc_jobs" and "url" in params:
+            return []
+        if table == "jobs" and params.get("url") == "eq.https://jobs.portco.three/hof":
+            return [{"url": "https://jobs.portco.three/hof"}]
+        return []
+
+    monkeypatch.setattr(job_scraper, "sb_get", fake_sb_get)
+    monkeypatch.setattr(job_scraper, "get_jobs_for_company", lambda _: fake_jobs)
+    monkeypatch.setattr(job_scraper.time, "sleep", lambda _: None)
+    monkeypatch.setattr(job_scraper, "sb_insert", lambda table, data: True)
+    monkeypatch.setattr(job_scraper, "sb_patch", lambda table, filters, data: patches.append((table, filters, data)) or True)
+
+    job_scraper.scrape_jobs("vc")
+
+    mirrored_updates = [(filters, data) for table, filters, data in patches if table == "jobs"]
+    assert len(mirrored_updates) == 1
+    assert mirrored_updates[0][0] == {"url": "https://jobs.portco.three/hof"}
+    assert mirrored_updates[0][1]["dna_fit"] is True
+    assert "last_seen" in mirrored_updates[0][1]
+
+
+def test_vc_monitor_scan_all_jobs_sets_dna_fit_on_insert(monkeypatch):
+    fake_companies = [
+        {
+            "id": 501,
+            "company": "DualEntry",
+            "stage": "Series A",
+            "vc_names": ["Lightspeed"],
+            "careers_url": "https://dualentry.com/careers",
+            "ats_type": "generic",
+            "ats_slug": None,
+        }
+    ]
+    fake_jobs = [
+        {
+            "title": "Chief of Staff",
+            "location": "New York, NY",
+            "salary_text": "$250,000",
+            "url": "https://dualentry.com/open-roles/chief-of-staff",
+        }
+    ]
+    inserts = []
+    updates = []
+
+    class DummyResp:
+        text = "ok"
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return fake_companies
+
+    monkeypatch.setattr(vc_monitor.requests, "get", lambda *args, **kwargs: DummyResp())
+    monkeypatch.setattr(vc_monitor, "get_jobs_for_company", lambda _: fake_jobs)
+    monkeypatch.setattr(vc_monitor.sb, "get_by_url", lambda url, table="vc_jobs": None)
+    monkeypatch.setattr(vc_monitor.sb, "insert", lambda table, data: inserts.append((table, data)) or True)
+    monkeypatch.setattr(vc_monitor.sb, "update", lambda table, filters, data: updates.append((table, filters, data)) or True)
+    monkeypatch.setattr(vc_monitor.time, "sleep", lambda _: None)
+
+    vc_monitor.scan_all_jobs()
+
+    vc_job_rows = [row for table, row in inserts if table == "vc_jobs"]
+    main_job_rows = [row for table, row in inserts if table == "jobs"]
+    assert len(vc_job_rows) == 1
+    assert len(main_job_rows) == 1
+    assert main_job_rows[0]["dna_fit"] is True
+
+
+def test_vc_monitor_scan_all_jobs_sets_dna_fit_on_existing_jobs(monkeypatch):
+    fake_companies = [
+        {
+            "id": 502,
+            "company": "Corgi Insurance",
+            "stage": "Series A",
+            "vc_names": ["Y Combinator"],
+            "careers_url": "https://corgi.insure/careers",
+            "ats_type": "generic",
+            "ats_slug": None,
+        }
+    ]
+    fake_jobs = [
+        {
+            "title": "Chief of Staff",
+            "location": "Remote - US",
+            "salary_text": "$240,000",
+            "url": "https://corgi.insure/jobs/chief-of-staff",
+        }
+    ]
+    updates = []
+
+    class DummyResp:
+        text = "ok"
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return fake_companies
+
+    monkeypatch.setattr(vc_monitor.requests, "get", lambda *args, **kwargs: DummyResp())
+    monkeypatch.setattr(vc_monitor, "get_jobs_for_company", lambda _: fake_jobs)
+    monkeypatch.setattr(vc_monitor.sb, "get_by_url", lambda url, table="vc_jobs": {"url": url})
+    monkeypatch.setattr(vc_monitor.sb, "insert", lambda table, data: True)
+    monkeypatch.setattr(vc_monitor.sb, "update", lambda table, filters, data: updates.append((table, filters, data)) or True)
+    monkeypatch.setattr(vc_monitor.time, "sleep", lambda _: None)
+
+    vc_monitor.scan_all_jobs()
+
+    vc_updates = [(filters, data) for table, filters, data in updates if table == "vc_jobs"]
+    main_updates = [(filters, data) for table, filters, data in updates if table == "jobs"]
+    assert len(vc_updates) == 1
+    assert len(main_updates) == 1
+    assert vc_updates[0][0] == {"url": "https://corgi.insure/jobs/chief-of-staff"}
+    assert main_updates[0][0] == {"url": "https://corgi.insure/jobs/chief-of-staff"}
+    assert main_updates[0][1]["dna_fit"] is True
 
 
 def test_vc_monitor_select_where_builds_filter_params(monkeypatch):
