@@ -10,10 +10,34 @@ Install test dependencies:
 pip install -r requirements-test.txt
 ```
 
+Optional local credentials file (so you do not need to export env vars every run):
+
+```bash
+cat > .env << 'EOF'
+SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co/rest/v1
+SUPABASE_KEY=YOUR_SERVICE_ROLE_KEY
+EOF
+```
+
+The scripts automatically load `.env` from this folder.
+
 Optional preflight check before scraping:
 
 ```bash
 python preflight_check.py
+```
+
+If rows are still `status=pending` (or status is blank/null), approve them in code before careers/job scan.
+Rows with `status=active` are also included by the scanner.
+
+```bash
+python vc_monitor.py --approve-pending
+```
+
+Typical real-db run order:
+
+```bash
+python vc_monitor.py --approve-pending --find-careers --scan-jobs
 ```
 
 Run the suite:

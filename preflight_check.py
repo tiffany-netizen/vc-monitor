@@ -7,9 +7,13 @@ from typing import Optional
 
 import requests
 
+from env_loader import load_local_env
+
 
 DEFAULT_SUPABASE_URL = "https://jhreeyesdtnmanolmjqu.supabase.co/rest/v1"
 DEFAULT_TIMEOUT = 15
+
+load_local_env()
 
 REQUIRED_TABLES = {
     "companies": ["id", "name", "website", "careers_url", "ats_type", "ats_slug", "last_scraped"],

@@ -36,6 +36,8 @@ from urllib.parse import urljoin, urlparse
 import requests
 from bs4 import BeautifulSoup
 
+from env_loader import load_local_env
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)-8s %(message)s",
@@ -46,6 +48,8 @@ log = logging.getLogger(__name__)
 # ----------------------------------------------------------------
 # SUPABASE CONFIG
 # ----------------------------------------------------------------
+
+load_local_env()
 
 SUPABASE_URL = os.environ.get(
     "SUPABASE_URL",
