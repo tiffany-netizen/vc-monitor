@@ -1,0 +1,44 @@
+# .github/workflows/discover-careers.yml
+# Manual-only: discovers careers pages for companies that don't have one yet.
+# Run this when you add new companies to Supabase and need to find their careers URLs.
+
+name: Discover Careers Pages
+
+on:
+  workflow_dispatch:
+    inputs:
+      table:
+        description: 'Table to discover (companies, vc, both)'
+        required: false
+        default: 'both'
+      og_only:
+        description: 'Only OG companies (companies table only)'
+        required: false
+        default: 'false'
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests beautifulsoup4 lxml
+
+      - name: Discover careers pages
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          ARGS="--table ${{ github.event.inputs.table }} --discover"
+          if [ "${{ github.event.inputs.og_only }}" = "true" ]; then
+            ARGS="$ARGS --og-only"
+          fi
+          python job_scraper.py $ARGS
