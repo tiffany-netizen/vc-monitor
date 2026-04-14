@@ -1,6 +1,6 @@
 # .github/workflows/job-scan.yml
-# Mon + Thu: Scrapes jobs from companies that already have a careers page.
-# Does NOT re-discover careers pages — run the discover workflow for that.
+# Mon + Thu: Runs discover (for companies without careers_url) then scrape.
+# Discovery auto-skips companies that already have a careers_url set.
 
 name: GT Job Scraper
 
@@ -17,11 +17,15 @@ on:
         description: 'Only OG companies (companies table)'
         required: false
         default: 'false'
+      mode:
+        description: 'Mode (all, discover, scrape)'
+        required: false
+        default: 'all'
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -36,23 +40,25 @@ jobs:
           pip install requests beautifulsoup4 lxml playwright
           playwright install chromium --with-deps
 
-      - name: Scrape jobs
+      - name: Run scraper
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: |
           TABLE="${{ github.event.inputs.table || 'both' }}"
+          MODE="${{ github.event.inputs.mode || 'all' }}"
           OG_FLAG=""
           if [ "${{ github.event.inputs.og_only }}" = "true" ]; then
             OG_FLAG="--og-only"
           fi
+          MODE_FLAG="--$MODE"
 
           if [ "$TABLE" = "both" ] || [ "$TABLE" = "vc" ]; then
-            echo "=== Scraping VC portfolio companies ==="
-            python job_scraper.py --table vc --scrape
+            echo "=== VC portfolio companies: $MODE ==="
+            python job_scraper.py --table vc $MODE_FLAG
           fi
 
           if [ "$TABLE" = "both" ] || [ "$TABLE" = "companies" ]; then
-            echo "=== Scraping OG member companies ==="
-            python job_scraper.py --table companies $OG_FLAG --scrape
+            echo "=== Companies table: $MODE $OG_FLAG ==="
+            python job_scraper.py --table companies $OG_FLAG $MODE_FLAG
           fi
