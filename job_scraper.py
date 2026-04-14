@@ -833,7 +833,8 @@ def scrape_jobs(table_key: str, company_id: Optional[int] = None, og_only: bool 
     else:
         params = {
             "careers_url": "neq.none",
-            "select": f"id,{name_col},{domain_col},careers_url,ats_type,ats_slug",
+            "select": f"id,{name_col},{domain_col},careers_url,ats_type,ats_slug"
+                + (",vc_names" if table_key == "vc" else ""),
         }
         if og_only and tbl == "companies":
             params["has_og_members"] = "eq.true"
