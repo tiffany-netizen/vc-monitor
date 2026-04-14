@@ -19,30 +19,7 @@ on:
         default: 'false'
 
 jobs:
-  scrape-vc:
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        run: |
-          pip install requests beautifulsoup4 lxml playwright
-          playwright install chromium --with-deps
-
-      - name: Scrape VC portfolio companies
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-        run: python job_scraper.py --table vc --scrape
-
-  scrape-og:
+  scrape:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -59,8 +36,23 @@ jobs:
           pip install requests beautifulsoup4 lxml playwright
           playwright install chromium --with-deps
 
-      - name: Scrape OG member companies
+      - name: Scrape jobs
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-        run: python job_scraper.py --table companies --og-only --scrape
+        run: |
+          TABLE="${{ github.event.inputs.table || 'both' }}"
+          OG_FLAG=""
+          if [ "${{ github.event.inputs.og_only }}" = "true" ]; then
+            OG_FLAG="--og-only"
+          fi
+
+          if [ "$TABLE" = "both" ] || [ "$TABLE" = "vc" ]; then
+            echo "=== Scraping VC portfolio companies ==="
+            python job_scraper.py --table vc --scrape
+          fi
+
+          if [ "$TABLE" = "both" ] || [ "$TABLE" = "companies" ]; then
+            echo "=== Scraping OG member companies ==="
+            python job_scraper.py --table companies $OG_FLAG --scrape
+          fi
