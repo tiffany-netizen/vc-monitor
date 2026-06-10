@@ -281,6 +281,21 @@ def get_domain(url: str) -> str:
     return urlparse(url).netloc.lstrip("www.")
 
 
+def url_is_live(url: str, timeout: int = 8) -> bool:
+    """Return False only if the URL is definitively gone (HTTP 404/410).
+    Fail-open on everything else (timeouts, bot-blocks, 5xx, redirects) so we
+    never drop a real posting that simply doesn't like our request."""
+    if not url:
+        return False
+    try:
+        resp = requests.head(url, headers=HEADERS_BROWSER, timeout=timeout, allow_redirects=True)
+        if resp.status_code == 405:  # HEAD not allowed — confirm with GET
+            resp = requests.get(url, headers=HEADERS_BROWSER, timeout=timeout, allow_redirects=True)
+        return resp.status_code not in (404, 410)
+    except Exception:
+        return True
+
+
 # ----------------------------------------------------------------
 # CAREERS PAGE DETECTION
 # ----------------------------------------------------------------
@@ -611,6 +626,17 @@ def scrape_dover(slug: str) -> list[dict]:
         return []
 
 
+def _clean_title(el) -> str:
+    """First non-empty text line of an element, capped at 100 chars (Change 3).
+    Dropping later lines strips appended location text, e.g.
+    'Head of Business Operations' + newline + 'San Francisco, United States'."""
+    for line in el.get_text("\n", strip=True).split("\n"):
+        line = line.strip()
+        if line:
+            return line[:100]
+    return ""
+
+
 def _extract_jobs_from_soup(soup: BeautifulSoup, careers_url: str) -> list[dict]:
     """Shared logic for extracting jobs from a parsed HTML page."""
     jobs = []
@@ -635,28 +661,41 @@ def _extract_jobs_from_soup(soup: BeautifulSoup, careers_url: str) -> list[dict]
             )
         ]
 
+    # Change 2: also skip team/people profiles, leadership/staff pages, and
+    # marketing pages (surveys) that get mistaken for job postings.
     junk_url = re.compile(
         r"cookie|privacy|terms|legal|gdpr|javascript:|#cookie|#privacy"
-        r"|/blog/|/press/|/news/|/about|/contact|/team|linkedin\.com/in/", re.I
+        r"|/blog/|/press/|/news/|/about|/contact|/team|/people/|/profile"
+        r"|/leadership|/staff/|survey|linkedin\.com/in/", re.I
     )
+
+    careers_norm = careers_url.rstrip("/")
 
     for item in containers:
         if item.name == "a":
-            title = item.get_text(" ", strip=True)
+            title = _clean_title(item)
             href = item.get("href", "")
         else:
             h_tag = item.find(["h2", "h3", "h4", "h5", "strong"])
-            title = h_tag.get_text(" ", strip=True) if h_tag else item.get_text(" ", strip=True)[:100]
+            title = _clean_title(h_tag if h_tag else item)
             a_tag = item.find("a", href=True)
             href = a_tag["href"] if a_tag else ""
 
         if not title or len(title) < 5 or len(title) > 100 or title in seen:
             continue
-        full_url = urljoin(careers_url, href) if href else ""
+
+        # Change 1: a real job needs its own per-job link — not blank, and not
+        # just the careers page itself (those are "ghost" rows like m3ter/Botrista).
+        if not href:
+            continue
+        full_url = urljoin(careers_url, href)
         if junk_url.search(full_url):
             continue
+        if full_url.rstrip("/") == careers_norm:
+            continue
+
         seen.add(title)
-        job_url = urljoin(careers_url, href) if href else careers_url
+        job_url = full_url
 
         loc_tags = item.find_all(["span", "p", "div"], class_=re.compile(r"loc|location|office", re.I))
         location = loc_tags[0].get_text(" ", strip=True) if loc_tags else ""
@@ -882,6 +921,10 @@ def scrape_jobs(table_key: str, company_id: Optional[int] = None, og_only: bool 
                 if not sb_patch(jobs_table, {"url": job_url}, update_payload):
                     log_write_failure("PATCH", jobs_table, f"company={name} url={job_url}")
             else:
+                # Change 4: don't insert a brand-new job whose link is already dead.
+                if not url_is_live(job_url):
+                    log.info(f"  SKIP dead link: {title} at {name} ({job_url})")
+                    continue
                 if table_key == "vc":
                     if not sb_insert(jobs_table, {
                         "company_id": co.get("id"),
