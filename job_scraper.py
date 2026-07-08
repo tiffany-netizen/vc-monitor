@@ -273,7 +273,9 @@ def safe_get(url: str, timeout: int = 15) -> Optional[requests.Response]:
         resp.raise_for_status()
         return resp
     except Exception as e:
-        log.debug(f"GET {url} failed: {e}")
+        # WARNING (not debug) so ATS fetch failures — 403 (IP block) / 429 (rate limit) /
+        # timeout — are visible in the run log instead of silently becoming "0 jobs".
+        log.warning(f"GET {url} failed: {e}")
         return None
 
 
@@ -815,6 +817,11 @@ def discover_careers(table_key: str, og_only: bool = False):
     }
     if og_only and tbl == "companies":
         params["has_og_members"] = "eq.true"
+    # Only touch companies we're actively monitoring. dna_fit=true == approved or
+    # provisional-pass; rejected/archived companies are dna_fit=false, so we don't waste
+    # discovery on them (and never learn a careers_url for a company we've excluded).
+    if tbl == "companies":
+        params["dna_fit"] = "eq.true"
 
     rows = sb_get(tbl, params)
     log.info(f"[{tbl}] Discovering careers pages for {len(rows)} companies{'  (OG only)' if og_only else ''}...")
@@ -877,6 +884,12 @@ def scrape_jobs(table_key: str, company_id: Optional[int] = None, og_only: bool 
         }
         if og_only and tbl == "companies":
             params["has_og_members"] = "eq.true"
+        # Only scrape companies we're actively monitoring (dna_fit=true). Rejecting or
+        # archiving a company in the Review UI sets dna_fit=false, which is now the single
+        # off-switch that also stops the scraper from pulling its listings — this is what
+        # keeps spam sources (deals/aggregator sites like Slickdeals) out once flagged.
+        if tbl == "companies":
+            params["dna_fit"] = "eq.true"
         rows = sb_get(tbl, params)
 
     log.info(f"[{tbl}] Scraping jobs for {len(rows)} companies...")
