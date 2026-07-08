@@ -6,6 +6,13 @@ import job_scraper
 import vc_monitor
 
 
+@pytest.fixture(autouse=True)
+def _stub_stale_close(monkeypatch):
+    """Stage-4 stale-close hits Supabase over the network. Stub it out by default so no
+    test touches the real DB; tests that assert on it re-patch sb_patch_where themselves."""
+    monkeypatch.setattr(job_scraper, "sb_patch_where", lambda table, params, data: 0, raising=False)
+
+
 def test_title_location_salary_filters_basics():
     assert job_scraper.title_matches("Chief Financial Officer")
     assert not job_scraper.title_matches("Senior Software Engineer")
@@ -257,6 +264,106 @@ def test_scrape_jobs_vc_existing_mirror_updates_dna_fit(monkeypatch):
     assert mirrored_updates[0][0] == {"url": "https://jobs.portco.three/hof"}
     assert mirrored_updates[0][1]["dna_fit"] is True
     assert "last_seen" in mirrored_updates[0][1]
+
+
+def test_scrape_jobs_closes_stale_jobs_for_companies(monkeypatch):
+    """After a successful scrape, jobs no longer on the board (older last_seen) are closed."""
+    fake_companies = [
+        {"id": 55, "name": "Acme", "website": "acme.com",
+         "careers_url": "https://acme.com/careers", "ats_type": "generic", "ats_slug": None}
+    ]
+    fake_jobs = [
+        {"title": "VP of Operations", "location": "Remote - US",
+         "salary_text": "$260,000", "url": "https://acme.com/jobs/vp-ops"}
+    ]
+    stale_calls = []
+
+    def fake_sb_get(table, params, limit=1000):
+        if table == "companies" and "select" in params:
+            return fake_companies
+        return []
+
+    monkeypatch.setattr(job_scraper, "sb_get", fake_sb_get)
+    monkeypatch.setattr(job_scraper, "get_jobs_for_company", lambda _: fake_jobs)
+    monkeypatch.setattr(job_scraper, "url_is_live", lambda url, timeout=8: True)
+    monkeypatch.setattr(job_scraper.time, "sleep", lambda _: None)
+    monkeypatch.setattr(job_scraper, "sb_insert", lambda table, data: True)
+    monkeypatch.setattr(job_scraper, "sb_patch", lambda table, filters, data: True)
+    monkeypatch.setattr(job_scraper, "sb_patch_where",
+                        lambda table, params, data: stale_calls.append((table, params, data)) or 2)
+
+    job_scraper.scrape_jobs("companies")
+
+    assert len(stale_calls) == 1
+    table, params, data = stale_calls[0]
+    assert table == "jobs"
+    assert params["company_id"] == "eq.55"
+    assert params["last_seen"].startswith("lt.")
+    assert params["status"] == "in.(new,active)"
+    assert data == {"status": "closed"}
+
+
+def test_scrape_jobs_skips_stale_close_when_scrape_returns_nothing(monkeypatch):
+    """A transient fetch failure (0 jobs returned) must NOT close a company's live roles."""
+    fake_companies = [
+        {"id": 56, "name": "Acme", "website": "acme.com",
+         "careers_url": "https://acme.com/careers", "ats_type": "generic", "ats_slug": None}
+    ]
+    stale_calls = []
+
+    def fake_sb_get(table, params, limit=1000):
+        if table == "companies" and "select" in params:
+            return fake_companies
+        return []
+
+    monkeypatch.setattr(job_scraper, "sb_get", fake_sb_get)
+    monkeypatch.setattr(job_scraper, "get_jobs_for_company", lambda _: [])  # scrape returned nothing
+    monkeypatch.setattr(job_scraper.time, "sleep", lambda _: None)
+    monkeypatch.setattr(job_scraper, "sb_insert", lambda table, data: True)
+    monkeypatch.setattr(job_scraper, "sb_patch", lambda table, filters, data: True)
+    monkeypatch.setattr(job_scraper, "sb_patch_where",
+                        lambda table, params, data: stale_calls.append((table, params, data)) or 0)
+
+    job_scraper.scrape_jobs("companies")
+
+    assert stale_calls == []
+
+
+def test_scrape_jobs_vc_stale_close_uses_active_flag(monkeypatch):
+    """VC path closes stale vc_jobs via active=false (that table has no status column)."""
+    fake_vc_companies = [
+        {"id": 91, "company": "Portco", "domain": "portco.co",
+         "careers_url": "https://jobs.portco.co", "ats_type": "generic", "ats_slug": None,
+         "vc_names": ["Example VC"]}
+    ]
+    fake_jobs = [
+        {"title": "Head of Finance", "location": "Remote - US",
+         "salary_text": "$260,000", "url": "https://jobs.portco.co/hof"}
+    ]
+    stale_calls = []
+
+    def fake_sb_get(table, params, limit=1000):
+        if table == "vc_portfolio_companies" and "select" in params:
+            return fake_vc_companies
+        return []
+
+    monkeypatch.setattr(job_scraper, "sb_get", fake_sb_get)
+    monkeypatch.setattr(job_scraper, "get_jobs_for_company", lambda _: fake_jobs)
+    monkeypatch.setattr(job_scraper, "url_is_live", lambda url, timeout=8: True)
+    monkeypatch.setattr(job_scraper.time, "sleep", lambda _: None)
+    monkeypatch.setattr(job_scraper, "sb_insert", lambda table, data: True)
+    monkeypatch.setattr(job_scraper, "sb_patch", lambda table, filters, data: True)
+    monkeypatch.setattr(job_scraper, "sb_patch_where",
+                        lambda table, params, data: stale_calls.append((table, params, data)) or 1)
+
+    job_scraper.scrape_jobs("vc")
+
+    vc_stale = [c for c in stale_calls if c[0] == "vc_jobs"]
+    assert len(vc_stale) == 1
+    _, params, data = vc_stale[0]
+    assert params["company_id"] == "eq.91"
+    assert params["active"] == "eq.true"
+    assert data == {"active": False}
 
 
 def test_vc_monitor_scan_all_jobs_sets_dna_fit_on_insert(monkeypatch):

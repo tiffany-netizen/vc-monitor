@@ -122,6 +122,24 @@ def sb_patch(table: str, filters: dict, data: dict) -> bool:
         return False
 
 
+def sb_patch_where(table: str, params: dict, data: dict) -> int:
+    """PATCH rows matching raw query params. Unlike sb_patch, the param VALUES carry their
+    own operator (e.g. {"last_seen": "lt.2026-..."}), so range/list filters work. Returns
+    the number of rows updated, or -1 on failure."""
+    url = f"{SUPABASE_URL}/{table}"
+    try:
+        resp = requests.patch(
+            url, params=params, json=data,
+            headers=sb_headers("return=representation"), timeout=15,
+        )
+        resp.raise_for_status()
+        rows = resp.json() if resp.text else []
+        return len(rows)
+    except Exception as e:
+        log.error(f"Supabase PATCH-where {table} failed: {e}")
+        return -1
+
+
 def sb_upsert(table: str, data: dict | list[dict]) -> bool:
     """POST with upsert (merge on conflict)."""
     url = f"{SUPABASE_URL}/{table}"
@@ -895,6 +913,7 @@ def scrape_jobs(table_key: str, company_id: Optional[int] = None, og_only: bool 
     log.info(f"[{tbl}] Scraping jobs for {len(rows)} companies...")
     now = datetime.now(UTC).isoformat()
     total_matches = 0
+    total_closed = 0
 
     for co in rows:
         name = co.get(name_col, "unknown")
@@ -991,12 +1010,35 @@ def scrape_jobs(table_key: str, company_id: Optional[int] = None, og_only: bool 
         if not sb_patch(tbl, {"id": co["id"]}, {"last_scraped": now}):
             log_write_failure("PATCH", tbl, f"company={name} id={co['id']} last_scraped={now}")
 
+        # Stage 4 — stale-close: every job we re-saw this run had its last_seen bumped to
+        # `now`, so any still-open job for this company with an older last_seen has dropped
+        # off the board. Mark it closed. Guarded on a non-empty scrape (`jobs`) so a
+        # transient fetch failure (0 jobs returned) never wrongly closes live roles.
+        if jobs:
+            if table_key == "vc":
+                n_closed = sb_patch_where(
+                    jobs_table,
+                    {"company_id": f"eq.{co['id']}", "last_seen": f"lt.{now}", "active": "eq.true"},
+                    {"active": False},
+                )
+            else:
+                n_closed = sb_patch_where(
+                    jobs_table,
+                    {"company_id": f"eq.{co['id']}", "last_seen": f"lt.{now}", "status": "in.(new,active)"},
+                    {"status": "closed"},
+                )
+            if n_closed < 0:
+                log_write_failure("PATCH", jobs_table, f"stale-close company={name} id={co['id']}")
+            elif n_closed:
+                total_closed += n_closed
+                log.info(f"  {name}: closed {n_closed} stale job(s) no longer on the board")
+
         if matches:
             log.info(f"  {name}: {matches} matching job(s)")
         total_matches += matches
         time.sleep(0.5)
 
-    log.info(f"[{tbl}] Scraping complete. {total_matches} total matching jobs across {len(rows)} companies.")
+    log.info(f"[{tbl}] Scraping complete. {total_matches} total matching jobs across {len(rows)} companies. {total_closed} stale job(s) closed.")
 
 
 # ----------------------------------------------------------------
