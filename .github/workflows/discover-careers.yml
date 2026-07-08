@@ -1,10 +1,15 @@
 # .github/workflows/discover-careers.yml
-# Manual-only: discovers careers pages for companies that don't have one yet.
-# Run this when you add new companies to Supabase and need to find their careers URLs.
+# Discovers careers pages for monitored companies (dna_fit=true) that don't have one yet,
+# so a newly-added fit company (incl. OG) automatically enters the scraper. Runs weekly on a
+# schedule, and can still be triggered manually.
 
 name: Discover Careers Pages
 
 on:
+  schedule:
+    # Weekly, Sunday 06:00 UTC — finds careers pages for newly-added fit companies
+    # (dna_fit=true, no careers_url yet) so they're ready for Monday's scrape.
+    - cron: '0 6 * * 0'
   workflow_dispatch:
     inputs:
       table:
@@ -37,8 +42,8 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: |
-          ARGS="--table ${{ github.event.inputs.table }} --discover"
-          if [ "${{ github.event.inputs.og_only }}" = "true" ]; then
+          ARGS="--table ${{ github.event.inputs.table || 'both' }} --discover"
+          if [ "${{ github.event.inputs.og_only || 'false' }}" = "true" ]; then
             ARGS="$ARGS --og-only"
           fi
           python job_scraper.py $ARGS
