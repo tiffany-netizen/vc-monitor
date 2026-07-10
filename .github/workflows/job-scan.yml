@@ -62,3 +62,12 @@ jobs:
             echo "=== Companies table: $MODE $OG_FLAG ==="
             python job_scraper.py --table companies $OG_FLAG $MODE_FLAG
           fi
+
+      # Fires once, after both tables are scraped: company enrich (S10) -> contact
+      # enrich (4657611) in Make. No-op unless MAKE_API_KEY secret is set and both
+      # scenarios are active. Skipped for discover-only runs.
+      - name: Chain enrichment (company then contact)
+        if: ${{ (github.event.inputs.mode || 'all') != 'discover' }}
+        env:
+          MAKE_API_KEY: ${{ secrets.MAKE_API_KEY }}
+        run: python job_scraper.py --chain-enrich
