@@ -60,6 +60,24 @@ SUPABASE_KEY = os.environ.get(
     "",  # set via env var or GitHub Secret
 )
 
+# ----------------------------------------------------------------
+# MAKE.COM ENRICHMENT CHAINING
+# ----------------------------------------------------------------
+# After a scrape, kick off enrichment in Make so the pipeline runs as one flow
+# (scrape -> company enrich -> contact enrich) instead of on a disconnected
+# schedule. Opt-in: only fires when MAKE_API_KEY is set (the GitHub Actions
+# secret), so local/manual runs are unaffected.
+
+MAKE_API_KEY = os.environ.get("MAKE_API_KEY", "")
+MAKE_API_BASE = os.environ.get("MAKE_API_BASE", "https://us1.make.com/api/v2")
+# Scenarios run in order after a scrape. Both must be ACTIVE in Make to run via API.
+#   4661650 = "S10: Apollo Org Enrichment"  (companies: funding / investors)
+#   4657611 = "contact enrichment"          (people: title/company + job changes)
+ENRICH_CHAIN = [
+    (4661650, "S10 company enrichment"),
+    (4657611, "contact enrichment"),
+]
+
 HEADERS_BROWSER = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -1042,6 +1060,44 @@ def scrape_jobs(table_key: str, company_id: Optional[int] = None, og_only: bool 
 
 
 # ----------------------------------------------------------------
+# ENRICHMENT CHAIN
+# ----------------------------------------------------------------
+
+def trigger_enrichment_chain() -> None:
+    """Run company- then contact-enrichment in Make, in sequence, after a scrape.
+
+    Best-effort and non-fatal: a chaining failure must never fail the scrape.
+    No-op unless MAKE_API_KEY is set. Each scenario must be ACTIVE in Make; an
+    inactive/failed scenario is logged and skipped so the next one still runs.
+    """
+    if not MAKE_API_KEY:
+        log.info("[chain] MAKE_API_KEY not set — skipping enrichment auto-chain.")
+        return
+    headers = {"Authorization": f"Token {MAKE_API_KEY}", "Content-Type": "application/json"}
+    for sid, name in ENRICH_CHAIN:
+        try:
+            log.info(f"[chain] running {name} (scenario {sid})…")
+            # Long timeout so the call blocks until the run finishes and the next
+            # scenario starts after it (Apollo rate-friendly). If a run outlasts the
+            # timeout the scenario still completes server-side; only the ordering is lost.
+            resp = requests.post(
+                f"{MAKE_API_BASE}/scenarios/{sid}/run",
+                headers=headers,
+                json={},
+                timeout=1500,
+            )
+            if resp.status_code >= 400:
+                log.warning(
+                    f"[chain] {name} did not run [{resp.status_code}]: "
+                    f"{resp.text[:200]} (is the scenario active?)"
+                )
+                continue
+            log.info(f"[chain] {name} done [{resp.status_code}].")
+        except requests.RequestException as e:
+            log.warning(f"[chain] {name} trigger failed ({e}); continuing.")
+
+
+# ----------------------------------------------------------------
 # CLI
 # ----------------------------------------------------------------
 
@@ -1055,7 +1111,15 @@ def main():
     parser.add_argument("--og-only", action="store_true",
                         help="Only process companies with OG members (companies table only)")
     parser.add_argument("--company", type=int, help="Scrape a single company by ID (companies table)")
+    parser.add_argument("--chain-enrich", action="store_true",
+                        help="Only fire the Make enrichment chain (company then contact); no scraping")
     args = parser.parse_args()
+
+    # Enrichment chain is a standalone step (run once after both tables are scraped
+    # by the workflow), so it lives outside the scrape branches and needs no SUPABASE_KEY.
+    if args.chain_enrich:
+        trigger_enrichment_chain()
+        return
 
     if not SUPABASE_KEY:
         log.error("SUPABASE_KEY not set. Export it or pass via environment variable.")
