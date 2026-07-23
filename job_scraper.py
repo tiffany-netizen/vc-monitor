@@ -429,17 +429,27 @@ def scrape_greenhouse(slug: str) -> list[dict]:
         return []
     try:
         data = resp.json()
-        jobs = []
-        for j in data.get("jobs", []):
+    except Exception as e:
+        log.warning(f"Greenhouse board unreadable ({slug}): {e}")
+        return []
+
+    jobs = []
+    bad = 0
+    # Per-posting guard: Greenhouse serves optional fields as explicit nulls
+    # (e.g. "metadata": null), so a single posting used to raise inside the loop
+    # and the old board-level except discarded EVERY job on that board.
+    for j in data.get("jobs") or []:
+        try:
             title = j.get("title", "")
             location = ", ".join(
-                loc.get("name", "") for loc in j.get("offices", []) if loc.get("name")
-            ) or j.get("location", {}).get("name", "")
+                loc.get("name", "") for loc in (j.get("offices") or []) if loc.get("name")
+            ) or (j.get("location") or {}).get("name", "")
             job_url = j.get("absolute_url", "")
 
             salary_text = ""
-            for meta in j.get("metadata", []):
-                if "salary" in meta.get("name", "").lower() or "comp" in meta.get("name", "").lower():
+            for meta in j.get("metadata") or []:
+                name = (meta.get("name") or "").lower()
+                if "salary" in name or "comp" in name:
                     salary_text = str(meta.get("value") or "")
             if not salary_text:
                 content = j.get("content", "") or ""
@@ -448,10 +458,12 @@ def scrape_greenhouse(slug: str) -> list[dict]:
                     salary_text = m.group(0)
 
             jobs.append({"title": title, "location": location, "url": job_url, "salary_text": salary_text})
-        return jobs
-    except Exception as e:
-        log.debug(f"Greenhouse parse error ({slug}): {e}")
-        return []
+        except Exception as e:
+            bad += 1
+            log.debug(f"Greenhouse posting skipped ({slug}): {e}")
+    if bad:
+        log.warning(f"Greenhouse {slug}: skipped {bad} malformed posting(s), kept {len(jobs)}")
+    return jobs
 
 
 def scrape_lever(slug: str) -> list[dict]:
@@ -461,17 +473,24 @@ def scrape_lever(slug: str) -> list[dict]:
         return []
     try:
         data = resp.json()
-        jobs = []
-        for j in data:
+    except Exception as e:
+        log.warning(f"Lever board unreadable ({slug}): {e}")
+        return []
+
+    jobs = []
+    bad = 0
+    for j in data or []:
+        try:
             title = j.get("text", "")
-            cats = j.get("categories", {})
-            location = cats.get("location", "") or (cats.get("allLocations", [""])[0] if cats.get("allLocations") else "")
+            cats = j.get("categories") or {}
+            all_locs = cats.get("allLocations") or []
+            location = cats.get("location") or (all_locs[0] if all_locs else "")
             job_url = j.get("hostedUrl", "")
 
             salary_text = ""
-            for lst in j.get("lists", []):
-                if any(kw in lst.get("text", "").lower() for kw in ["salary", "compensation", "pay"]):
-                    salary_text = BeautifulSoup(lst.get("content", ""), "lxml").get_text(" ")
+            for lst in j.get("lists") or []:
+                if any(kw in (lst.get("text") or "").lower() for kw in ["salary", "compensation", "pay"]):
+                    salary_text = BeautifulSoup(lst.get("content") or "", "lxml").get_text(" ")
             if not salary_text:
                 plain = j.get("descriptionPlain", "") or ""
                 m = re.search(r"\$[\d,]+\s*[-\u2013]\s*\$[\d,]+", plain)
@@ -479,10 +498,12 @@ def scrape_lever(slug: str) -> list[dict]:
                     salary_text = m.group(0)
 
             jobs.append({"title": title, "location": location, "url": job_url, "salary_text": salary_text})
-        return jobs
-    except Exception as e:
-        log.debug(f"Lever parse error ({slug}): {e}")
-        return []
+        except Exception as e:
+            bad += 1
+            log.debug(f"Lever posting skipped ({slug}): {e}")
+    if bad:
+        log.warning(f"Lever {slug}: skipped {bad} malformed posting(s), kept {len(jobs)}")
+    return jobs
 
 
 def scrape_ashby(slug: str) -> list[dict]:
@@ -504,7 +525,9 @@ def scrape_ashby(slug: str) -> list[dict]:
     }
     try:
         resp = requests.post(url, json=query, timeout=15)
-        postings = resp.json().get("data", {}).get("jobBoard", {}).get("jobPostings", []) or []
+        body = resp.json() or {}
+        board = (body.get("data") or {}).get("jobBoard") or {}
+        postings = board.get("jobPostings") or []
         jobs = []
         for p in postings:
             location = p.get("locationName", "")
@@ -536,25 +559,28 @@ def scrape_smartrecruiters(slug: str) -> list[dict]:
             if not postings:
                 break
             for p in postings:
-                loc = p.get("location", {})
-                city = loc.get("city", "")
-                region = loc.get("region", "")
-                country = loc.get("country", "")
-                location = ", ".join(part for part in [city, region, country] if part)
-                comp = p.get("compensation", {})
-                salary_text = ""
-                if comp:
-                    sal_min = comp.get("min", "")
-                    sal_max = comp.get("max", "")
-                    currency = comp.get("currency", "")
-                    if sal_min or sal_max:
-                        salary_text = f"{currency} {sal_min}-{sal_max}".strip()
-                jobs.append({
-                    "title": p.get("name", ""),
-                    "location": location,
-                    "url": p.get("ref", "") or f"https://careers.smartrecruiters.com/{slug}/{p.get('id', '')}",
-                    "salary_text": salary_text,
-                })
+                try:
+                    loc = p.get("location") or {}
+                    city = loc.get("city", "")
+                    region = loc.get("region", "")
+                    country = loc.get("country", "")
+                    location = ", ".join(part for part in [city, region, country] if part)
+                    comp = p.get("compensation") or {}
+                    salary_text = ""
+                    if comp:
+                        sal_min = comp.get("min", "")
+                        sal_max = comp.get("max", "")
+                        currency = comp.get("currency", "")
+                        if sal_min or sal_max:
+                            salary_text = f"{currency} {sal_min}-{sal_max}".strip()
+                    jobs.append({
+                        "title": p.get("name", ""),
+                        "location": location,
+                        "url": p.get("ref", "") or f"https://careers.smartrecruiters.com/{slug}/{p.get('id', '')}",
+                        "salary_text": salary_text,
+                    })
+                except Exception as e:
+                    log.debug(f"SmartRecruiters posting skipped ({slug}): {e}")
             if len(postings) < 100:
                 break
             offset += 100
@@ -592,9 +618,10 @@ def scrape_workday(slug: str, careers_url: str = "") -> list[dict]:
             return []
         data = resp.json()
         total = data.get("total", 0)
-        for posting in data.get("jobPostings", []):
+        for posting in data.get("jobPostings") or []:
             title = posting.get("title", "")
-            loc = posting.get("locationsText", "") or posting.get("bulletFields", [""])[0]
+            bullets = posting.get("bulletFields") or [""]
+            loc = posting.get("locationsText", "") or bullets[0]
             ext_path = posting.get("externalPath", "")
             job_url = f"https://{slug}.wd{wd_num}.myworkdayjobs.com/en-US/{site}{ext_path}" if ext_path else ""
             jobs.append({"title": title, "location": loc, "url": job_url, "salary_text": ""})
@@ -606,9 +633,10 @@ def scrape_workday(slug: str, careers_url: str = "") -> list[dict]:
             resp = requests.post(api_url, json=payload, headers=HEADERS_BROWSER, timeout=15)
             if resp.status_code != 200:
                 break
-            for posting in resp.json().get("jobPostings", []):
+            for posting in resp.json().get("jobPostings") or []:
                 title = posting.get("title", "")
-                loc = posting.get("locationsText", "") or posting.get("bulletFields", [""])[0]
+                bullets = posting.get("bulletFields") or [""]
+                loc = posting.get("locationsText", "") or bullets[0]
                 ext_path = posting.get("externalPath", "")
                 job_url = f"https://{slug}.wd{wd_num}.myworkdayjobs.com/en-US/{site}{ext_path}" if ext_path else ""
                 jobs.append({"title": title, "location": loc, "url": job_url, "salary_text": ""})
