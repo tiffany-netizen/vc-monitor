@@ -653,3 +653,59 @@ def test_main_cli_routes_to_expected_pipeline(monkeypatch, argv, expected_calls)
     job_scraper.main()
 
     assert calls == expected_calls
+
+class _FakeResp:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def json(self):
+        return self._payload
+
+
+def test_greenhouse_null_metadata_does_not_discard_the_board(monkeypatch):
+    """Regression: Greenhouse serves optional fields as explicit nulls (e.g.
+    "metadata": null). A single such posting used to raise inside the parse loop and
+    the board-level except returned [] — silently dropping EVERY role on that board."""
+    payload = {
+        "jobs": [
+            {
+                "title": "Chief of Staff",
+                "absolute_url": "https://boards.greenhouse.io/acme/jobs/1",
+                "offices": [{"name": "New York"}],
+                "metadata": None,        # <- the killer
+                "location": None,
+                "content": "",
+            },
+            {
+                "title": "VP of Finance",
+                "absolute_url": "https://boards.greenhouse.io/acme/jobs/2",
+                "offices": None,
+                "metadata": [{"name": "Salary", "value": "$250,000 - $300,000"}],
+                "location": {"name": "Remote - US"},
+                "content": "",
+            },
+        ]
+    }
+    monkeypatch.setattr(job_scraper, "safe_get", lambda url, timeout=15: _FakeResp(payload))
+
+    jobs = job_scraper.scrape_greenhouse("acme")
+
+    assert [j["title"] for j in jobs] == ["Chief of Staff", "VP of Finance"]
+    assert jobs[0]["location"] == "New York"
+    assert jobs[1]["location"] == "Remote - US"
+    assert jobs[1]["salary_text"] == "$250,000 - $300,000"
+
+
+def test_lever_null_categories_and_lists_are_survivable(monkeypatch):
+    payload = [
+        {"text": "Head of Finance", "hostedUrl": "https://jobs.lever.co/acme/1",
+         "categories": None, "lists": None, "descriptionPlain": ""},
+        {"text": "Controller", "hostedUrl": "https://jobs.lever.co/acme/2",
+         "categories": {"allLocations": ["San Francisco"]}, "lists": [], "descriptionPlain": ""},
+    ]
+    monkeypatch.setattr(job_scraper, "safe_get", lambda url, timeout=15: _FakeResp(payload))
+
+    jobs = job_scraper.scrape_lever("acme")
+
+    assert [j["title"] for j in jobs] == ["Head of Finance", "Controller"]
+    assert jobs[1]["location"] == "San Francisco"
