@@ -230,6 +230,11 @@ def title_matches(title: str) -> bool:
     if any(p in t for p in junk):
         return False
 
+    # Seniority and function are separated by a space ("Director of Finance"),
+    # a comma ("Director, Finance"), or a slash. ATS platforms use all three, and
+    # requiring whitespace silently dropped every comma-form title.
+    sep = r"(?:\s*[,/]\s*|\s+)(?:of\s+)?"
+
     patterns = [
         # C-suite
         r"\bcfo\b", r"\bcoo\b", r"\bcro\b", r"\bcao\b",
@@ -239,23 +244,25 @@ def title_matches(title: str) -> bool:
         r"\bchief revenue officer\b",
         r"\bchief accounting officer\b",
         # VP / SVP level
-        r"\b(vp|vice president)\s+(of\s+)?(finance|accounting|operations|ops|"
+        r"\b(vp|vice president)" + sep + r"(finance|accounting|operations|ops|"
         r"revenue operations|rev ops|business operations|fp&a|"
         r"financial planning|strategic finance|corporate development)\b",
-        r"\b(svp|senior vice president)\s+(of\s+)?(finance|accounting|"
+        r"\b(svp|senior vice president)" + sep + r"(finance|accounting|"
         r"operations|ops|finance and operations)\b",
-        # Director level
-        r"\bdirector\s+(of\s+)?(finance|accounting|technical accounting|"
-        r"business operations|operations|ops|fp&a|financial planning|"
-        r"strategic finance|revenue operations|rev ops|corporate development)\b",
-        r"\bsenior director\s+(of\s+)?(finance|accounting|operations|ops|"
-        r"business operations|fp&a|strategic finance)\b",
+        # Director level. "sr." is as common as "senior" in ATS titles.
+        r"\b(?:sr\.?|senior)?\s*director" + sep + r"(finance|accounting|"
+        r"technical accounting|business operations|operations|ops|fp&a|"
+        r"financial planning|strategic finance|revenue operations|rev ops|"
+        r"corporate development)\b",
+        # Function-first word order: "Finance Director", "Finance Manager" is
+        # deliberately NOT included - manager level is below the target band.
+        r"\b(finance|accounting|operations|fp&a|strategic finance)\s+director\b",
         # Head of
-        r"\bhead of\s+(finance|accounting|accounting operations|operations|ops|"
-        r"fp&a|strategic finance|revenue cycle|revenue cycle management|"
-        r"corporate development|event operations|marketplace operations|"
-        r"business operations|financial operations|finance and operations|"
-        r"ops and finance)\b",
+        r"\bhead of" + sep + r"(finance|accounting|accounting operations|"
+        r"operations|ops|fp&a|strategic finance|revenue cycle|"
+        r"revenue cycle management|corporate development|event operations|"
+        r"marketplace operations|business operations|financial operations|"
+        r"finance and operations|ops and finance)\b",
         # Controller
         r"\bcontroller\b",
         # Strategic finance (standalone title)
@@ -344,10 +351,17 @@ CAREERS_PATHS = [
     "/careers/", "/jobs/", "/work-here", "/careers/open-positions",
 ]
 
+# Path segments that are part of Greenhouse's own URL structure, never a board
+# slug. Without this guard, "boards.greenhouse.io/embed/job_board?for=acme"
+# captured "embed" as the slug and every later request 404'd.
+ATS_RESERVED_SLUGS = {"embed", "job_board", "jobs", "job", "boards", "board"}
+
 ATS_PATTERNS = [
+    # The embed form must be tried BEFORE the generic boards.greenhouse.io
+    # pattern, otherwise the generic one matches first and captures "embed".
+    ("greenhouse", r"greenhouse\.io/embed/job_board\?for=([^&\s\"']+)", 1),
     ("greenhouse", r"boards\.greenhouse\.io/([^/\s\"'?#]+)", 1),
     ("greenhouse", r"job-boards\.greenhouse\.io/([^/\s\"'?#]+)", 1),
-    ("greenhouse", r"greenhouse\.io/embed/job_board\?for=([^&\s\"']+)", 1),
     ("lever", r"jobs\.lever\.co/([^/\s\"'?#]+)", 1),
     ("ashby", r"jobs\.ashbyhq\.com/([^/\s\"'?#]+)", 1),
     ("workday", r"([a-zA-Z0-9-]+)\.wd\d+\.myworkdayjobs\.com", 1),
@@ -364,9 +378,13 @@ ATS_PATTERNS = [
 def detect_ats(html: str, base_url: str) -> tuple[Optional[str], Optional[str], Optional[str]]:
     content = html + " " + base_url
     for ats_type, pattern, group in ATS_PATTERNS:
-        m = re.search(pattern, content, re.IGNORECASE)
-        if m:
+        for m in re.finditer(pattern, content, re.IGNORECASE):
             slug = m.group(group).rstrip("/").lower() if m.lastindex and group <= m.lastindex else None
+            # A reserved segment means we matched Greenhouse's own URL scaffolding,
+            # not a company board. Keep scanning: the real slug usually appears
+            # elsewhere on the page (e.g. in the embed's ?for= parameter).
+            if slug in ATS_RESERVED_SLUGS:
+                continue
             if ats_type == "greenhouse":
                 direct = f"https://boards.greenhouse.io/{slug}"
             elif ats_type == "lever":
@@ -853,6 +871,55 @@ TABLE_CONFIG = {
 # MAIN PIPELINES
 # ----------------------------------------------------------------
 
+_COMPANY_INDEX: Optional[dict] = None
+
+
+def _norm_company_name(name: str) -> str:
+    """Normalise a company name for equality comparison. Conservative: this
+    decides whether we write a foreign key, so it must not merge two firms."""
+    if not name:
+        return ""
+    n = re.sub(r"[^a-z0-9]+", " ", name.lower().strip())
+    n = re.sub(r"\b(inc|llc|ltd|limited|corp|corporation|co|the|plc|gmbh|ag|bv|pte|pty)\b", " ", n)
+    return re.sub(r"\s+", " ", n).strip()
+
+
+def resolve_company_id(name: str, domain: str = "") -> Optional[int]:
+    """Find the `companies` row for a VC-portfolio company, by domain then name.
+
+    VC-portfolio roles are mirrored into the main `jobs` table, but that insert
+    used to omit company_id. The Roles UI joins jobs -> companies -> dna_fit, so
+    an unlinked job is invisible even when its company is approved. Returns None
+    unless exactly one company matches, because a wrong link is worse than none.
+    """
+    global _COMPANY_INDEX
+    if _COMPANY_INDEX is None:
+        by_domain: dict = {}
+        by_name: dict = {}
+        for c in sb_get("companies", {"select": "id,name,website"}):
+            cid = c.get("id")
+            d = extract_domain(c.get("website"))
+            if d:
+                by_domain.setdefault(d, set()).add(cid)
+            n = _norm_company_name(c.get("name"))
+            if n:
+                by_name.setdefault(n, set()).add(cid)
+        _COMPANY_INDEX = {"domain": by_domain, "name": by_name}
+        log.info(f"[link] company index built: {len(by_domain)} domains, {len(by_name)} names")
+
+    d = extract_domain(domain)
+    if d:
+        hit = _COMPANY_INDEX["domain"].get(d)
+        if hit and len(hit) == 1:
+            return next(iter(hit))
+    n = _norm_company_name(name)
+    if n:
+        hit = _COMPANY_INDEX["name"].get(n)
+        if hit and len(hit) == 1:
+            return next(iter(hit))
+    return None
+
+
 def extract_domain(website: str) -> Optional[str]:
     """Pull bare domain from a website URL."""
     if not website:
@@ -1038,7 +1105,11 @@ def scrape_jobs(table_key: str, company_id: Optional[int] = None, og_only: bool 
                     if not sb_patch("jobs", {"url": job_url}, {"last_seen": now, "dna_fit": True}):
                         log_write_failure("PATCH", "jobs", f"company={name} url={job_url}")
                 else:
-                    if not sb_insert("jobs", {
+                    # Link the mirrored row to its `companies` record. Without
+                    # this the Roles UI cannot reach companies.dna_fit and the
+                    # job never appears, even at an approved company.
+                    linked_id = resolve_company_id(name, co.get("domain") or "")
+                    mirror = {
                         "company_name": name,
                         "title": title,
                         "url": job_url,
@@ -1047,7 +1118,12 @@ def scrape_jobs(table_key: str, company_id: Optional[int] = None, og_only: bool 
                         "last_seen": now,
                         "dna_fit": True,
                         "status": "new",
-                    }):
+                    }
+                    if linked_id is not None:
+                        mirror["company_id"] = linked_id
+                    else:
+                        log.info(f"  UNLINKED: no unique companies row for {name}")
+                    if not sb_insert("jobs", mirror):
                         log_write_failure("INSERT", "jobs", f"company={name} title={title} url={job_url}")
 
             matches += 1

@@ -711,6 +711,162 @@ def test_lever_null_categories_and_lists_are_survivable(monkeypatch):
     assert jobs[1]["location"] == "San Francisco"
 
 
+# ----------------------------------------------------------------
+# Regression: Greenhouse embed boards were stored with slug "embed"
+# ----------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "html, base_url, expected_slug",
+    [
+        # The bug: the generic boards.greenhouse.io pattern matched first and
+        # captured "embed", so every later API call hit
+        # boards-api.greenhouse.io/v1/boards/embed/jobs and 404'd.
+        (
+            '<a href="https://boards.greenhouse.io/embed/job_board?for=descript">Jobs</a>',
+            "https://descript.com/careers",
+            "descript",
+        ),
+        (
+            '<iframe src="https://boards.greenhouse.io/embed/job_board?for=affinity"></iframe>',
+            "https://affinity.co/careers",
+            "affinity",
+        ),
+        # Plain board URLs must keep working unchanged.
+        ('<a href="https://boards.greenhouse.io/acme">x</a>', "https://acme.com/careers", "acme"),
+        ('<a href="https://job-boards.greenhouse.io/mixmax">x</a>', "https://mixmax.com/careers", "mixmax"),
+    ],
+)
+def test_detect_ats_never_returns_a_reserved_path_as_the_slug(html, base_url, expected_slug):
+    ats_type, slug, direct = job_scraper.detect_ats(html, base_url)
+    assert ats_type == "greenhouse"
+    assert slug == expected_slug
+    assert slug not in job_scraper.ATS_RESERVED_SLUGS
+    assert direct == f"https://boards.greenhouse.io/{expected_slug}"
+
+
+# ----------------------------------------------------------------
+# Regression: comma-separated and function-first titles were dropped
+# ----------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        # ATS platforms write these with a comma; the old regex required
+        # whitespace, so all of them were silently discarded.
+        "Director, Finance",
+        "Director, FP&A",
+        "Director, Accounting",
+        "Director, Business Operations",
+        "Senior Director, Finance",
+        "Sr. Director, Finance",
+        "VP, Finance",
+        "VP, Operations",
+        "Vice President, Finance",
+        "Vice President, Strategic Finance",   # observed live at PayZen, 2026-07-30
+        "Finance Director",                    # function-first word order
+        # Forms that already worked must keep working.
+        "Director of Finance",
+        "VP of Finance",
+        "Head of Finance",
+        "Chief of Staff",
+        "Financial Controller",
+    ],
+)
+def test_title_matches_accepts_comma_and_function_first_titles(title):
+    assert job_scraper.title_matches(title) is True
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        # Manager level sits below the target band and must stay excluded even
+        # though the comma form now parses.
+        "Finance Manager",
+        "Senior Manager, Finance",
+        "Manager, FP&A",
+        # Wrong function entirely.
+        "Head of People Operations",
+        "Director of Marketing",
+        "Sales Director",
+        "Director, Product",
+        "Software Engineer",
+        "Account Executive",
+        "Privacy Policy",
+    ],
+)
+def test_title_matches_still_rejects_out_of_band_titles(title):
+    assert job_scraper.title_matches(title) is False
+
+
+# ----------------------------------------------------------------
+# Regression: mirrored VC jobs had no company_id, so the UI never showed them
+# ----------------------------------------------------------------
+
+def test_resolve_company_id_matches_on_domain_then_name(monkeypatch):
+    monkeypatch.setattr(
+        job_scraper, "sb_get",
+        lambda table, params, limit=1000: [
+            {"id": 7, "name": "Acme, Inc.", "website": "https://www.acme.com"},
+            {"id": 8, "name": "Ambiguous", "website": ""},
+            {"id": 9, "name": "Ambiguous", "website": ""},
+        ])
+    job_scraper._COMPANY_INDEX = None
+
+    assert job_scraper.resolve_company_id("Acme Inc", "") == 7
+    assert job_scraper.resolve_company_id("totally different", "https://acme.com") == 7
+    # Two companies share this name, so refuse to guess: a wrong foreign key is
+    # worse than a missing one.
+    assert job_scraper.resolve_company_id("Ambiguous", "") is None
+    assert job_scraper.resolve_company_id("Not Present", "") is None
+    job_scraper._COMPANY_INDEX = None
+
+
+def test_vc_mirror_row_carries_company_id(monkeypatch):
+    fake_vc_companies = [
+        {
+            "id": 88,
+            "company": "Portco Two",
+            "domain": "portco.two",
+            "careers_url": "https://jobs.portco.two",
+            "ats_type": "generic",
+            "ats_slug": None,
+            "vc_names": ["Example VC"],
+        }
+    ]
+    fake_jobs = [{
+        "title": "Head of Finance",
+        "location": "Remote - US",
+        "salary_text": "$260,000",
+        "url": "https://jobs.portco.two/hof",
+    }]
+    inserts = []
+
+    def fake_sb_get(table, params, limit=1000):
+        if table == "companies":
+            return [{"id": 4242, "name": "Portco Two", "website": "https://portco.two"}]
+        if table == "vc_portfolio_companies" and "select" in params:
+            return fake_vc_companies
+        if table in {"vc_jobs", "jobs"} and "url" in params:
+            return []
+        return []
+
+    monkeypatch.setattr(job_scraper, "sb_get", fake_sb_get)
+    monkeypatch.setattr(job_scraper, "get_jobs_for_company", lambda _: fake_jobs)
+    monkeypatch.setattr(job_scraper.time, "sleep", lambda _: None)
+    monkeypatch.setattr(job_scraper, "url_is_live", lambda _: True)
+    monkeypatch.setattr(job_scraper, "sb_insert", lambda table, data: inserts.append((table, data)) or True)
+    monkeypatch.setattr(job_scraper, "sb_patch", lambda table, filters, data: True)
+    job_scraper._COMPANY_INDEX = None
+
+    job_scraper.scrape_jobs("vc")
+
+    mirrored = [row for table, row in inserts if table == "jobs"]
+    assert len(mirrored) == 1
+    # The whole point: without this the Roles UI cannot reach companies.dna_fit.
+    assert mirrored[0]["company_id"] == 4242
+    job_scraper._COMPANY_INDEX = None
+
+
 # ---------------------------------------------------------------------------
 # VC portfolio ingestion: company names must be display-quality.
 #
