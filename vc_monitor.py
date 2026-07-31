@@ -1105,6 +1105,46 @@ _URL_LIKE = re.compile(r"^\s*(https?://|www\.)|^[a-z0-9-]+(\.[a-z]{2,})+/?\s*$",
 # Subdomains that carry no brand information once the domain is the fallback.
 _STRIP_HOST_PARTS = ("www", "app", "get", "join", "hello", "home")
 
+# Link text that is a marketing tagline rather than a name -- "The all-in-one
+# construction management software" for procore.com. The company is real, so the
+# link is kept, but the domain supplies the name.
+_TAGLINE = re.compile(r"^\S+(\s+\S+){3,}$|\.\s*$")
+
+# Hosts that are job boards, aggregators or press, never portfolio companies.
+# These matter more than cosmetics: a row for jobs.a16z.com gets a careers page
+# discovered and its whole aggregate board scraped into the Roles feed.
+_NOT_A_COMPANY_HOST = re.compile(
+    r"^(jobs|job-boards|boards|careers|apply|talent|work|hire|hiring|blog|news|"
+    r"press|media|docs|help|support|status|shop|store)\.|"
+    r"(^|\.)(getro\.com|consider\.co|greenhouse\.io|lever\.co|ashbyhq\.com|"
+    r"workable\.com|breezy\.hr|smartrecruiters\.com|myworkdayjobs\.com|"
+    r"businessinsider\.com|forbes\.com|bloomberg\.com|reuters\.com|wsj\.com|"
+    r"cookiebot\.com|cookielaw\.org|onetrust\.com|hubspot\.com|typeform\.com|"
+    r"eventbrite\.com|substack\.com|beehiiv\.com|mailchimp\.com)$", re.I)
+
+# Link text that is site furniture. Matched as a prefix because portfolio pages
+# append their own suffixes ("Jobs at Upfront", "About Bain Capital").
+_NAV_TEXT = re.compile(
+    r"^(terms|privacy|cookie|legal|disclosure|disclaimer|imprint|accessibility"
+    r"|jobs?|careers?|open roles|view open|see (all|portfolio)|our portfolio"
+    r"|portfolio (jobs|job board)|join us|work with us|contact|about|our team"
+    r"|team|blog|news|press|media|insights|events|login|log in|sign in|sign up"
+    r"|subscribe|newsletter|home|menu|search|apply|learn more|read more"
+    r"|more info|the seed \d)\b", re.I)
+
+
+def is_portfolio_company_link(text: str, domain: str) -> bool:
+    """False for links that are site furniture rather than a portfolio company.
+
+    The portfolio parsers accept any off-site anchor, so nav, legal and
+    job-board links survive into vc_portfolio_companies. The job-board ones are
+    the costly case: the row gets a careers page discovered and an entire
+    aggregate board scraped into the Roles feed.
+    """
+    if _NOT_A_COMPANY_HOST.search((domain or "").strip().lower()):
+        return False
+    return not _NAV_TEXT.match((text or "").strip())
+
 
 def clean_company_name(text: str, domain: str) -> str:
     """Return a display-quality company name for a portfolio link.
@@ -1117,7 +1157,7 @@ def clean_company_name(text: str, domain: str) -> str:
     domain, which is always present -- a derived name beats a raw URL.
     """
     name = _LINK_NOISE.sub(" ", text or "").strip(" \t\n-–—|·,")
-    if name and not _URL_LIKE.match(name):
+    if name and not _URL_LIKE.match(name) and not _TAGLINE.match(name):
         return re.sub(r"\s{2,}", " ", name)
 
     host = (domain or "").strip().lower().rstrip("/")
@@ -1188,6 +1228,8 @@ def scrape_vc_portfolio_static(vc: dict) -> list[dict]:
         if domain in seen_domains:
             continue
         if any(s in full_url.lower() for s in ["mailto:", "tel:", "#"]):
+            continue
+        if not is_portfolio_company_link(text, domain):
             continue
 
         name_key = text.lower().strip()
@@ -1397,6 +1439,8 @@ async def scrape_vc_portfolio_playwright(vc: dict) -> list[dict]:
                     continue
                 if any(s in href.lower() for s in ["mailto:", "tel:", "javascript:"]):
                     continue
+                if not is_portfolio_company_link(text, domain):
+                    continue
                 # Skip duplicate company names (catches same company from different elements)
                 name_key = text.lower().strip()
                 if name_key in seen_names:
@@ -1465,7 +1509,8 @@ def _extract_companies_from_api(
             if not url_val.startswith("http"):
                 url_val = f"https://{url_val}"
             domain = get_domain(url_val)
-            if domain and domain != vc_domain and domain not in skip_domains:
+            if (domain and domain != vc_domain and domain not in skip_domains
+                    and is_portfolio_company_link(name_val, domain)):
                 results.append({
                     "company_name": clean_company_name(name_val, domain),
                     "domain": domain,

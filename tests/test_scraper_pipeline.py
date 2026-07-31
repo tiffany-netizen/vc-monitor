@@ -946,3 +946,109 @@ def test_dry_run_scan_writes_nothing(monkeypatch):
          "js_required": False}))
 
     assert found == 1
+
+
+# ---------------------------------------------------------------------------
+# VC portfolio ingestion: reject site furniture, not just clean its name.
+#
+# The parsers accept any off-site anchor, so nav, legal and job-board links
+# survive into vc_portfolio_companies. The job-board ones are the costly case: a
+# row for jobs.a16z.com gets a careers page discovered and an entire aggregate
+# board scraped into the Roles feed. Measured on a real scan of the 41 configured
+# pages: 24 of 1,188 proposed rows were links of this kind.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("text,domain", [
+    # Job boards, all seen in a real scan.
+    ("Jobs", "jobs.a16z.com"),
+    ("JOBS", "jobs.upfront.com"),
+    ("Open Roles", "jobs.underscore.vc"),
+    ("Portfolio Jobs", "jobs.felicis.com"),
+    ("Portfolio Job Board", "mayfield.getro.com"),
+    ("Jobs at GC", "job-boards.greenhouse.io"),
+    ("Join Us", "boards.greenhouse.io"),
+    ("Data Science", "jobs.liveoakvp.com"),
+    ("jobAlert", "careers.redpoint.com"),
+    # Legal, consent and press furniture.
+    ("Terms of Use", "point72.com"),
+    ("Learn more about this provider", "cookiebot.com"),
+    ("Powered by Onetrust", "onetrust.com"),
+    ("The Seed 100: The best early-stage investors", "businessinsider.com"),
+    ("About Bain Capital", "baincapital.com"),
+    ("Apply", "sempervirensvc.typeform.com"),
+])
+def test_site_furniture_is_not_a_portfolio_company(text, domain):
+    assert not vc_monitor.is_portfolio_company_link(text, domain)
+
+
+@pytest.mark.parametrize("text,domain", [
+    ("Anthropic", "anthropic.com"),
+    ("Abnormal Security", "abnormal.ai"),
+    # A tagline instead of a name: still a real company, keep the link.
+    ("The all-in-one construction management software", "procore.com"),
+    ("Global direct-to-device (D2D) satellite connectivity", "skylo.tech"),
+    # "Jobber" starts with "job" but is a company, not a job board.
+    ("Jobber", "getjobber.com"),
+    # Careers-sounding name on its own domain is still a company.
+    ("Teamable", "teamable.com"),
+])
+def test_real_companies_survive_the_furniture_filter(text, domain):
+    assert vc_monitor.is_portfolio_company_link(text, domain)
+
+
+@pytest.mark.parametrize("text,domain,expected", [
+    ("The all-in-one construction management software", "procore.com", "Procore"),
+    ("Optimizing electric fleet operations", "ampcontrol.io", "Ampcontrol"),
+    ("Global direct-to-device (D2D) satellite connectivity", "skylo.tech", "Skylo"),
+    # Short real names are never replaced.
+    ("Abnormal Security", "abnormal.ai", "Abnormal Security"),
+    ("Warby Parker", "warbyparker.com", "Warby Parker"),
+])
+def test_marketing_taglines_fall_back_to_the_domain_name(text, domain, expected):
+    assert vc_monitor.clean_company_name(text, domain) == expected
+
+
+def test_static_parser_drops_job_board_links(monkeypatch):
+    html = """
+      <a href="https://anthropic.com">Anthropic</a>
+      <a href="https://jobs.a16z.com/">Jobs</a>
+      <a href="https://point72.com/terms">Terms of Use</a>
+      <a href="https://procore.com">The all-in-one construction management software</a>
+    """
+
+    class _Resp:
+        text = html
+
+    monkeypatch.setattr(vc_monitor, "safe_get", lambda url, **kw: _Resp())
+
+    got = vc_monitor.scrape_vc_portfolio_static(
+        {"name": "Test VC", "portfolio_url": "https://testvc.com/portfolio"})
+
+    assert {c["company_name"] for c in got} == {"Anthropic", "Procore"}
+
+
+@pytest.mark.parametrize("text,domain", [
+    # Survived the first pass because the JSON-intercept path was unfiltered.
+    ("jobAlert", "careers.redpoint.com"),
+    ("The Seed 100", "businessinsider.com"),
+    # Content subdomains are not the company.
+    ("distribute content globally", "blog.hexa3d.io"),
+    ("Docs", "docs.stripe.com"),
+    ("Status", "status.twilio.com"),
+])
+def test_content_and_board_subdomains_are_rejected(text, domain):
+    assert not vc_monitor.is_portfolio_company_link(text, domain)
+
+
+def test_json_intercept_path_applies_the_furniture_filter():
+    """The Playwright API-intercept path builds rows from JSON, not anchors, and
+    was the one route where site furniture still got through."""
+    out = []
+    vc_monitor._extract_companies_from_api(
+        {"companies": [
+            {"name": "Anthropic", "website": "https://anthropic.com"},
+            {"name": "jobAlert", "website": "https://careers.redpoint.com"},
+        ]},
+        out, "redpoint.com", set())
+
+    assert [c["company_name"] for c in out] == ["Anthropic"]
