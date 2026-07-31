@@ -1114,7 +1114,8 @@ _TAGLINE = re.compile(r"^\S+(\s+\S+){3,}$|\.\s*$")
 # These matter more than cosmetics: a row for jobs.a16z.com gets a careers page
 # discovered and its whole aggregate board scraped into the Roles feed.
 _NOT_A_COMPANY_HOST = re.compile(
-    r"^(jobs|job-boards|boards|careers|apply|talent|work|hire|hiring)\.|"
+    r"^(jobs|job-boards|boards|careers|apply|talent|work|hire|hiring|blog|news|"
+    r"press|media|docs|help|support|status|shop|store)\.|"
     r"(^|\.)(getro\.com|consider\.co|greenhouse\.io|lever\.co|ashbyhq\.com|"
     r"workable\.com|breezy\.hr|smartrecruiters\.com|myworkdayjobs\.com|"
     r"businessinsider\.com|forbes\.com|bloomberg\.com|reuters\.com|wsj\.com|"
@@ -1508,7 +1509,8 @@ def _extract_companies_from_api(
             if not url_val.startswith("http"):
                 url_val = f"https://{url_val}"
             domain = get_domain(url_val)
-            if domain and domain != vc_domain and domain not in skip_domains:
+            if (domain and domain != vc_domain and domain not in skip_domains
+                    and is_portfolio_company_link(name_val, domain)):
                 results.append({
                     "company_name": clean_company_name(name_val, domain),
                     "domain": domain,

@@ -1025,3 +1025,30 @@ def test_static_parser_drops_job_board_links(monkeypatch):
         {"name": "Test VC", "portfolio_url": "https://testvc.com/portfolio"})
 
     assert {c["company_name"] for c in got} == {"Anthropic", "Procore"}
+
+
+@pytest.mark.parametrize("text,domain", [
+    # Survived the first pass because the JSON-intercept path was unfiltered.
+    ("jobAlert", "careers.redpoint.com"),
+    ("The Seed 100", "businessinsider.com"),
+    # Content subdomains are not the company.
+    ("distribute content globally", "blog.hexa3d.io"),
+    ("Docs", "docs.stripe.com"),
+    ("Status", "status.twilio.com"),
+])
+def test_content_and_board_subdomains_are_rejected(text, domain):
+    assert not vc_monitor.is_portfolio_company_link(text, domain)
+
+
+def test_json_intercept_path_applies_the_furniture_filter():
+    """The Playwright API-intercept path builds rows from JSON, not anchors, and
+    was the one route where site furniture still got through."""
+    out = []
+    vc_monitor._extract_companies_from_api(
+        {"companies": [
+            {"name": "Anthropic", "website": "https://anthropic.com"},
+            {"name": "jobAlert", "website": "https://careers.redpoint.com"},
+        ]},
+        out, "redpoint.com", set())
+
+    assert [c["company_name"] for c in out] == ["Anthropic"]
