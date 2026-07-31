@@ -104,6 +104,11 @@ SUPABASE_URL = os.environ.get(
 )
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
 
+# Set by --dry-run. When true, scan_vc parses portfolio pages and reports what it
+# would add, but performs no insert or update. This scan is the one path that can
+# add hundreds of rows in a single run, so it needs a way to be inspected first.
+DRY_RUN = False
+
 
 class SupabaseClient:
     """Simple Supabase REST client for VC monitor operations."""
@@ -1088,6 +1093,47 @@ def lookup_stage_crunchbase(company_name: str) -> Optional[str]:
 # VC PORTFOLIO SCRAPING
 # ─────────────────────────────────────────────────────────────────────
 
+# Screen-reader boilerplate that portfolio pages append to link text. It is part
+# of the anchor's text content, so it lands in company_name unless stripped.
+_LINK_NOISE = re.compile(
+    r"\s*[\(\[]?\s*(opens?\s+in\s+(a\s+)?new\s+(tab|window)|external\s+link"
+    r"|new\s+tab|opens\s+externally)\s*[\)\]]?\s*", re.I)
+
+# Link text that is really a URL, not a name: "www.alloy.com/", "https://x.ai".
+_URL_LIKE = re.compile(r"^\s*(https?://|www\.)|^[a-z0-9-]+(\.[a-z]{2,})+/?\s*$", re.I)
+
+# Subdomains that carry no brand information once the domain is the fallback.
+_STRIP_HOST_PARTS = ("www", "app", "get", "join", "hello", "home")
+
+
+def clean_company_name(text: str, domain: str) -> str:
+    """Return a display-quality company name for a portfolio link.
+
+    Portfolio pages are scraped by reading anchor text, which is often the
+    company's URL ("www.alloy.com/") or carries accessibility boilerplate
+    ("Alloy (opens in new tab)"). That text is written straight to
+    vc_portfolio_companies.company and shown in the Roles feed, so it has to be
+    cleaned here. When the text carries no name at all we derive one from the
+    domain, which is always present -- a derived name beats a raw URL.
+    """
+    name = _LINK_NOISE.sub(" ", text or "").strip(" \t\n-–—|·,")
+    if name and not _URL_LIKE.match(name):
+        return re.sub(r"\s{2,}", " ", name)
+
+    host = (domain or "").strip().lower().rstrip("/")
+    if not host:
+        return name
+    parts = [p for p in host.split(".") if p]
+    while len(parts) > 2 and parts[0] in _STRIP_HOST_PARTS:
+        parts.pop(0)
+    if parts and parts[0] in _STRIP_HOST_PARTS and len(parts) > 1:
+        parts.pop(0)
+    stem = parts[0] if parts else host
+    # "warby-parker" -> "Warby Parker"; single-token stems stay as one word,
+    # since there is no reliable way to split "warbyparker".
+    return " ".join(w.capitalize() for w in re.split(r"[-_]+", stem) if w) or host
+
+
 def scrape_vc_portfolio_static(vc: dict) -> list[dict]:
     """
     Scrape a static VC portfolio page.
@@ -1151,7 +1197,7 @@ def scrape_vc_portfolio_static(vc: dict) -> list[dict]:
         seen_domains.add(domain)
         seen_names.add(name_key)
         companies.append({
-            "company_name": text,
+            "company_name": clean_company_name(text, domain),
             "domain": domain,
             "stage": None,
             "detail_url": full_url,
@@ -1360,7 +1406,7 @@ async def scrape_vc_portfolio_playwright(vc: dict) -> list[dict]:
                 seen_names.add(name_key)
 
                 companies.append({
-                    "company_name": text,
+                    "company_name": clean_company_name(text, domain),
                     "domain": domain,
                     "stage": stage,
                     "detail_url": href,
@@ -1421,7 +1467,7 @@ def _extract_companies_from_api(
             domain = get_domain(url_val)
             if domain and domain != vc_domain and domain not in skip_domains:
                 results.append({
-                    "company_name": name_val,
+                    "company_name": clean_company_name(name_val, domain),
                     "domain": domain,
                     "stage": data.get("stage") or data.get("funding_stage"),
                     "detail_url": url_val,
@@ -1447,6 +1493,7 @@ async def scan_vc(vc: dict) -> int:
     log.info(f"  found {len(companies)} candidates")
     inserted = 0
     failed = 0
+    would_insert = 0
 
     for co in companies:
         name = co["company_name"]
@@ -1464,6 +1511,12 @@ async def scan_vc(vc: dict) -> int:
             continue
 
         existing = sb.get_by_domain(domain)
+
+        if DRY_RUN:
+            if not existing:
+                would_insert += 1
+                log.info(f"  [dry-run] would INSERT {name}  ({domain})")
+            continue
 
         if existing:
             vc_names = existing.get("vc_names") or []
@@ -1495,6 +1548,10 @@ async def scan_vc(vc: dict) -> int:
                 inserted += 1
             else:
                 failed += 1
+
+    if DRY_RUN:
+        log.info(f"  [dry-run] {would_insert} would be added, nothing written")
+        return len(companies)
 
     sb.insert(
         "vc_scan_log",
@@ -1892,11 +1949,18 @@ async def main():
     parser.add_argument("--all",           action="store_true", help="Run full pipeline")
     parser.add_argument("--test-ats",      nargs="+", metavar="TYPE:SLUG",
                         help="Quick-test ATS slugs, e.g. greenhouse:lever  lever:levels")
+    parser.add_argument("--dry-run",       action="store_true",
+                        help="Scan portfolio pages and report what would be added, without writing")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
 
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
+
+    if args.dry_run:
+        global DRY_RUN
+        DRY_RUN = True
+        log.info("DRY RUN — no rows will be inserted or updated.")
 
     if args.test_ats:
         test_ats(args.test_ats)
