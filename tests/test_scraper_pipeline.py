@@ -709,3 +709,84 @@ def test_lever_null_categories_and_lists_are_survivable(monkeypatch):
 
     assert [j["title"] for j in jobs] == ["Head of Finance", "Controller"]
     assert jobs[1]["location"] == "San Francisco"
+
+
+# ---------------------------------------------------------------------------
+# VC portfolio ingestion: company names must be display-quality.
+#
+# Portfolio pages are scraped by reading anchor text. On several of the boards
+# already configured (Felicis, SignalFire, JMI) that text is the company's URL,
+# or carries screen-reader boilerplate. The value goes straight into
+# vc_portfolio_companies.company and is shown in the Roles feed, so a raw URL
+# there is a user-visible defect. Measured before the fix: 71% of the 797 rows a
+# fresh scan would add had an unusable name.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("text,domain,expected", [
+    # Accessibility boilerplate stripped, real name kept.
+    ("Alloy (opens in new tab)", "alloy.com", "Alloy"),
+    ("Astranis [opens in a new window]", "astranis.com", "Astranis"),
+    ("Assembled external link", "assembled.com", "Assembled"),
+    # Link text is only a URL -> derive the name from the domain.
+    ("www.adaptive.co/ (opens in new tab)", "adaptive.co", "Adaptive"),
+    ("https://www.alchemy.com/", "alchemy.com", "Alchemy"),
+    ("warbyparker.com", "warbyparker.com", "Warbyparker"),
+    # Hyphenated hosts read as words; bare "www." host is not a name.
+    ("www.", "warby-parker.com", "Warby Parker"),
+    # A genuine name is never replaced by its domain.
+    ("Anthropic", "anthropic.com", "Anthropic"),
+    ("Warby Parker", "warbyparker.com", "Warby Parker"),
+])
+def test_clean_company_name_produces_a_display_name(text, domain, expected):
+    assert vc_monitor.clean_company_name(text, domain) == expected
+
+
+def test_clean_company_name_never_returns_a_url():
+    for text, domain in [("https://x.ai/", "x.ai"), ("www.bubble.io/", "bubble.io"),
+                         ("app.anomalo.com", "anomalo.com"), ("", "argyle.com")]:
+        out = vc_monitor.clean_company_name(text, domain)
+        assert not out.lower().startswith(("http", "www.")), out
+        assert "opens in" not in out.lower()
+        assert out, "a name must never come back empty when a domain is known"
+
+
+def test_static_portfolio_parser_cleans_the_names_it_stores(monkeypatch):
+    html = """
+      <a href="https://www.alloy.com/">www.alloy.com/ (opens in new tab)</a>
+      <a href="https://anthropic.com">Anthropic</a>
+      <a href="https://twitter.com/vc">Twitter</a>
+    """
+
+    class _Resp:
+        text = html
+
+    monkeypatch.setattr(vc_monitor, "safe_get", lambda url, **kw: _Resp())
+
+    got = vc_monitor.scrape_vc_portfolio_static(
+        {"name": "Test VC", "portfolio_url": "https://testvc.com/portfolio"})
+
+    names = {c["company_name"] for c in got}
+    assert names == {"Alloy", "Anthropic"}, names
+
+
+def test_dry_run_scan_writes_nothing(monkeypatch):
+    """--dry-run must not reach Supabase. This scan can add hundreds of rows."""
+    import asyncio
+
+    monkeypatch.setattr(vc_monitor, "DRY_RUN", True)
+    monkeypatch.setattr(vc_monitor, "scrape_vc_portfolio_static",
+                        lambda vc: [{"company_name": "Alloy", "domain": "alloy.com",
+                                     "stage": None, "detail_url": "https://alloy.com"}])
+    monkeypatch.setattr(vc_monitor.sb, "get_by_domain", lambda domain: None)
+
+    def _boom(*a, **k):
+        raise AssertionError("dry run must not write to Supabase")
+
+    monkeypatch.setattr(vc_monitor.sb, "insert", _boom)
+    monkeypatch.setattr(vc_monitor.sb, "update", _boom)
+
+    found = asyncio.run(vc_monitor.scan_vc(
+        {"name": "Test VC", "portfolio_url": "https://testvc.com/portfolio",
+         "js_required": False}))
+
+    assert found == 1
