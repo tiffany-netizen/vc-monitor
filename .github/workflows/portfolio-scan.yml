@@ -1,0 +1,50 @@
+# Refreshes vc_portfolio_companies from the VC portfolio pages in vc_monitor.py.
+#
+# Nothing was scheduled to run this before, so the table had not gained a company
+# since 2026-04 even though VC portfolio is the highest-yielding company source
+# in the system. The Sunday careers-page discovery and the Mon/Thu job scan both
+# already cover the vc table, so newly ingested companies flow through to the
+# Roles feed without any further wiring.
+#
+# Runs Saturday so the new companies exist before Sunday's careers discovery.
+name: VC Portfolio Scan
+
+on:
+  schedule:
+    - cron: '0 12 * * 6'   # Saturday 8am ET (12:00 UTC)
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Parse portfolio pages and report counts without writing'
+        type: boolean
+        default: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install requests beautifulsoup4 lxml playwright
+          playwright install --with-deps chromium
+
+      - name: Scan VC portfolio pages
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          ARGS="--scan-vcs"
+          if [ "${{ github.event.inputs.dry_run || 'false' }}" = "true" ]; then
+            ARGS="$ARGS --dry-run"
+          fi
+          python vc_monitor.py $ARGS
