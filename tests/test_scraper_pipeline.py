@@ -1052,3 +1052,61 @@ def test_json_intercept_path_applies_the_furniture_filter():
         out, "redpoint.com", set())
 
     assert [c["company_name"] for c in out] == ["Anthropic"]
+
+
+# ---------------------------------------------------------------------------
+# vc_names is stored as a JSON string, not an array.
+#
+# scan_vc appended to the raw value, which raised "'str' object has no attribute
+# 'append'". scan_all_vcs catches per firm, so one already-known company killed
+# the whole firm. On the 2026-07-31 scan that cost ~800 companies across
+# Redpoint, Menlo, Felicis, Upfront, JMI, Gradient, SemperVirens and Westly.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("stored,expected", [
+    ('["Menlo Ventures"]', ["Menlo Ventures"]),
+    ('["Menlo Ventures", "Index Ventures"]', ["Menlo Ventures", "Index Ventures"]),
+    (["Menlo Ventures"], ["Menlo Ventures"]),
+    (None, []),
+    ("", []),
+    ("[]", []),
+    # Not valid JSON: treat the whole value as a single name rather than crash.
+    ("Menlo Ventures", ["Menlo Ventures"]),
+])
+def test_vc_names_is_always_a_list(stored, expected):
+    got = vc_monitor._as_vc_name_list(stored)
+    assert got == expected
+    got.append("New VC")   # must be mutable; this is the call that used to fail
+
+
+def test_known_company_updates_instead_of_killing_the_firm(monkeypatch):
+    """The regression itself: a company already in the table, whose vc_names is
+    a JSON string, must update cleanly and let the scan continue."""
+    import asyncio
+
+    monkeypatch.setattr(vc_monitor, "DRY_RUN", False)
+    monkeypatch.setattr(vc_monitor, "scrape_vc_portfolio_static", lambda vc: [
+        {"company_name": "Abnormal", "domain": "abnormal.ai", "stage": None,
+         "detail_url": "https://abnormal.ai"},
+        {"company_name": "Anthropic", "domain": "anthropic.com", "stage": None,
+         "detail_url": "https://anthropic.com"},
+    ])
+    # First company is already known and stores vc_names as a string.
+    monkeypatch.setattr(vc_monitor.sb, "get_by_domain", lambda domain:
+                        {"id": 1, "vc_names": '["Greylock"]'}
+                        if domain == "abnormal.ai" else None)
+
+    updates, inserts = [], []
+    monkeypatch.setattr(vc_monitor.sb, "update",
+                        lambda table, where, data: updates.append(data) or True)
+    monkeypatch.setattr(vc_monitor.sb, "insert",
+                        lambda table, data: inserts.append((table, data)) or True)
+
+    asyncio.run(vc_monitor.scan_vc({"name": "Menlo Ventures", "js_required": False,
+                                    "portfolio_url": "https://menlovc.com/portfolio"}))
+
+    # The known company was updated, with the new firm appended to the parsed list.
+    assert updates and updates[0]["vc_names"] == ["Greylock", "Menlo Ventures"]
+    # And crucially the scan did NOT stop: the second company still got inserted.
+    portfolio_inserts = [d for t, d in inserts if t == "vc_portfolio_companies"]
+    assert [d["company"] for d in portfolio_inserts] == ["Anthropic"]

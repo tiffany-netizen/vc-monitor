@@ -1525,6 +1525,34 @@ def _extract_companies_from_api(
                 _extract_companies_from_api(v, results, vc_domain, skip_domains)
 
 
+def _as_vc_name_list(value) -> list:
+    """Return vc_names as a list, whatever the column hands back.
+
+    Every row in vc_portfolio_companies stores this as a JSON *string* --
+    '["Menlo Ventures", "Index Ventures"]' -- not as an array, so calling
+    .append on the raw value raises "'str' object has no attribute 'append'".
+    scan_all_vcs only catches exceptions per firm, so one already-known company
+    aborted that whole firm and every company after it went unscanned.
+
+    Observed on the 2026-07-31 scan: Redpoint, Menlo, Felicis, Upfront, JMI,
+    Gradient, SemperVirens and Westly all died on their first known company.
+    360 of an expected ~1,170 rows landed.
+    """
+    if value is None or value == "":
+        return []
+    if isinstance(value, list):
+        return list(value)
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except (ValueError, TypeError):
+            return [value]
+        if isinstance(parsed, list):
+            return parsed
+        return [parsed] if parsed else []
+    return [value]
+
+
 async def scan_vc(vc: dict) -> int:
     """Scan one VC portfolio page and upsert results into Supabase."""
     now = datetime.now(UTC).isoformat()
@@ -1561,10 +1589,13 @@ async def scan_vc(vc: dict) -> int:
             if not existing:
                 would_insert += 1
                 log.info(f"  [dry-run] would INSERT {name}  ({domain})")
+            # A dry run returns here, so it never exercises the update branch
+            # below. That is how the vc_names crash reached a real run unseen:
+            # the dry run was clean because it only ever took the insert path.
             continue
 
         if existing:
-            vc_names = existing.get("vc_names") or []
+            vc_names = _as_vc_name_list(existing.get("vc_names"))
             if vc["name"] not in vc_names:
                 vc_names.append(vc["name"])
             sb.update(
