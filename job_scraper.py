@@ -710,6 +710,37 @@ def scrape_dover(slug: str) -> list[dict]:
         return []
 
 
+def scrape_bamboohr(slug: str) -> list[dict]:
+    """BambooHR public careers JSON API.
+
+    An empty board is a real, distinguishable state here (meta.totalCount == 0),
+    unlike the generic scraper where zero jobs could also mean an unparseable page.
+    """
+    url = f"https://{slug}.bamboohr.com/careers/list"
+    resp = safe_get(url)
+    if not resp:
+        return []
+    try:
+        data = resp.json()
+        jobs = []
+        for j in data.get("result") or []:
+            loc = j.get("location") or {}
+            parts = [loc.get("city") or "", loc.get("state") or ""]
+            location = ", ".join(p for p in parts if p)
+            if j.get("isRemote") and not location:
+                location = "Remote"
+            jobs.append({
+                "title": j.get("jobOpeningName", ""),
+                "location": location,
+                "url": f"https://{slug}.bamboohr.com/careers/{j.get('id', '')}",
+                "salary_text": "",
+            })
+        return jobs
+    except Exception as e:
+        log.debug(f"BambooHR parse error ({slug}): {e}")
+        return []
+
+
 def _clean_title(el) -> str:
     """First non-empty text line of an element, capped at 100 chars (Change 3).
     Dropping later lines strips appended location text, e.g.
@@ -836,8 +867,10 @@ def get_jobs_for_company(co: dict) -> list[dict]:
         return scrape_rippling(slug)
     if ats_type == "dover" and slug:
         return scrape_dover(slug)
+    if ats_type == "bamboohr" and slug:
+        return scrape_bamboohr(slug)
 
-    if ats_type and ats_type not in ("greenhouse", "lever", "ashby", "smartrec", "workday", "rippling", "dover"):
+    if ats_type and ats_type not in ("greenhouse", "lever", "ashby", "smartrec", "workday", "rippling", "dover", "bamboohr"):
         log.warning(f"  No dedicated scraper for ATS '{ats_type}' (slug: {slug}), falling back to generic")
 
     if careers_url:
