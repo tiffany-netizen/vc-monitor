@@ -819,27 +819,50 @@ def _extract_jobs_from_soup(soup: BeautifulSoup, careers_url: str) -> list[dict]
     return jobs
 
 
+def _render_careers_page(careers_url: str) -> list[str]:
+    """Render a JS-heavy careers page headless. Returns HTML of the page and
+    every iframe (embedded boards live in iframes, not the main document)."""
+    from playwright.sync_api import sync_playwright
+    htmls = []
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        # skip heavy assets so renders stay fast
+        page.route("**/*", lambda route: route.abort()
+                   if route.request.resource_type in ("image", "media", "font")
+                   else route.continue_())
+        # networkidle flakes on pages with analytics beacons; a fixed settle
+        # wait after DOM load is what reliably surfaces client-rendered boards
+        page.goto(careers_url, wait_until="domcontentloaded", timeout=30000)
+        page.wait_for_timeout(4000)
+        for frame in page.frames:
+            try:
+                htmls.append(frame.content())
+            except Exception:
+                continue
+        browser.close()
+    return htmls
+
+
 def scrape_generic(careers_url: str) -> list[dict]:
     """Scrape jobs from a non-ATS careers page. Falls back to Playwright for JS-rendered pages."""
+    jobs = []
     resp = safe_get(careers_url)
-    if not resp:
-        return []
-    soup = BeautifulSoup(resp.text, "lxml")
-    jobs = _extract_jobs_from_soup(soup, careers_url)
+    if resp:
+        soup = BeautifulSoup(resp.text, "lxml")
+        jobs = _extract_jobs_from_soup(soup, careers_url)
 
-    # Fallback: if static HTML found nothing, try rendering with Playwright
+    # Fallback: static fetch was blocked or found nothing -> render with Playwright
     if not jobs:
         try:
-            from playwright.sync_api import sync_playwright
             log.info(f"  Trying Playwright fallback for {careers_url}")
-            with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True)
-                page = browser.new_page()
-                page.goto(careers_url, wait_until="networkidle", timeout=20000)
-                html = page.content()
-                browser.close()
-            soup = BeautifulSoup(html, "lxml")
-            jobs = _extract_jobs_from_soup(soup, careers_url)
+            seen_urls = set()
+            for html in _render_careers_page(careers_url):
+                soup = BeautifulSoup(html, "lxml")
+                for job in _extract_jobs_from_soup(soup, careers_url):
+                    if job["url"] not in seen_urls:
+                        seen_urls.add(job["url"])
+                        jobs.append(job)
         except ImportError:
             log.debug("Playwright not installed, skipping JS fallback")
         except Exception as e:
