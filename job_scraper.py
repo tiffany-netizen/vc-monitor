@@ -323,7 +323,7 @@ def safe_get(url: str, timeout: int = 15) -> Optional[requests.Response]:
 
 
 def get_domain(url: str) -> str:
-    return urlparse(url).netloc.lstrip("www.")
+    return urlparse(url).netloc.removeprefix("www.")
 
 
 def url_is_live(url: str, timeout: int = 8) -> bool:
@@ -986,7 +986,10 @@ def extract_domain(website: str) -> Optional[str]:
     try:
         parsed = urlparse(website)
         host = parsed.netloc or parsed.path.split("/")[0]
-        return host.lstrip("www.").rstrip("/").lower()
+        # str.lstrip("www.") strips characters, not the prefix — it turned
+        # "willreed.com" into "illreed.com" and broke discovery for every
+        # domain starting with "w".
+        return host.lower().rstrip("/").removeprefix("www.")
     except Exception:
         return None
 
