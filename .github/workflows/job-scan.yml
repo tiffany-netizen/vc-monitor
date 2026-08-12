@@ -1,12 +1,12 @@
 # .github/workflows/job-scan.yml
-# Mon + Thu: Runs discover (for companies without careers_url) then scrape.
+# Mon + Wed + Fri: Runs discover (for companies without careers_url) then scrape.
 # Discovery auto-skips companies that already have a careers_url set.
 
 name: GT Job Scraper
 
 on:
   schedule:
-    - cron: '0 13 * * 1,4'  # Monday + Thursday at 9am ET (13:00 UTC)
+    - cron: '0 13 * * 1,3,5'  # Monday + Wednesday + Friday at 9am ET (13:00 UTC)
   workflow_dispatch:
     inputs:
       table:
