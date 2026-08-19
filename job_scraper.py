@@ -271,9 +271,48 @@ def title_matches(title: str) -> bool:
     return any(re.search(p, t) for p in patterns)
 
 
-def is_us_location(location: str) -> bool:
+# A title can match the target patterns above and still be the wrong thing: a role selling
+# services TO a finance leader, a consulting engagement, or a marketing page that merely
+# mentions "CFO". title_matches asks "does this look like our band"; this asks "is it
+# actually a job at a company we would place into". Both must pass.
+DISQUALIFYING_TITLE_PATTERNS = [
+    # Vendors and service providers. Their whole business is being the outsourced CFO,
+    # so their pages are full of target-looking words that are never a hire.
+    r"\bsolutions?\b",
+    r"\bconsultants?\b",
+    r"\bconsulting\b",
+    r"\badvisory\b",
+    r"\boutsourced\b",
+    r"\bfractional\b",
+    r"\bbookkeeping\b",
+    r"\bcfo support\b",
+    # Sales roles that sell to the office of the CFO.
+    r"\baccount executive\b",
+    r"\baccount manager\b",
+    r"\bpartnerships?\b",
+    r"\bbusiness development\b",
+    r"\bsales\b",
+    # Out of scope by function.
+    r"\blegal\b",
+    r"\bcounsel\b",
+    # Marketing / directory pages, not postings: "For Accounting & CFO Firms".
+    r"^for\s",
+    r"\bfirms\b",
+    r"\bagencies\b",
+]
+
+
+def title_disqualified(title: str) -> bool:
+    """True when a title that passed title_matches() is still not a real target role."""
+    t = title.lower().strip()
+    return any(re.search(p, t) for p in DISQUALIFYING_TITLE_PATTERNS)
+
+
+def location_status(location: str) -> str:
+    """"us", "non_us", or "unknown". Blank is unknown, NOT us — a posting whose location
+    failed to parse must not be silently treated as American."""
     if not location or not location.strip():
-        return True
+        return "unknown"
     loc = location.lower()
     non_us = [
         "london", " uk", "united kingdom", "england", "canada", "toronto",
@@ -284,7 +323,14 @@ def is_us_location(location: str) -> bool:
         "tel aviv", "spain", "madrid", "barcelona", "poland", "warsaw",
         "japan", "tokyo", "korea", "seoul", "china", "beijing", "shanghai",
     ]
-    return not any(kw in loc for kw in non_us)
+    return "non_us" if any(kw in loc for kw in non_us) else "us"
+
+
+def is_us_location(location: str) -> bool:
+    """Back-compat wrapper. Unknown locations are allowed through rather than dropped —
+    dropping them would silently delete most of the feed. They are flagged instead:
+    the location is persisted (Change 4) so an unparsed location is visible, not invisible."""
+    return location_status(location) != "non_us"
 
 
 def salary_qualifies(salary_text: str) -> bool:
@@ -1086,6 +1132,7 @@ def scrape_jobs(table_key: str, company_id: Optional[int] = None, og_only: bool 
     now = datetime.now(UTC).isoformat()
     total_matches = 0
     total_closed = 0
+    unknown_locations = 0
 
     for co in rows:
         name = co.get(name_col, "unknown")
@@ -1108,10 +1155,15 @@ def scrape_jobs(table_key: str, company_id: Optional[int] = None, og_only: bool 
 
             if not title_matches(title):
                 continue
+            if title_disqualified(title):
+                log.debug(f"  SKIP disqualified title: {title} at {name}")
+                continue
             if not is_us_location(location):
                 continue
             if not salary_qualifies(salary_text):
                 continue
+            if location_status(location) == "unknown":
+                unknown_locations += 1
 
             # Check if job URL already exists
             existing = sb_get(jobs_table, {"url": f"eq.{job_url}", "limit": "1"})
@@ -1149,6 +1201,8 @@ def scrape_jobs(table_key: str, company_id: Optional[int] = None, og_only: bool 
                         "company_name": name,
                         "title": title,
                         "url": job_url,
+                        "location": location,
+                        "salary_text": salary_text,
                         "source": source,
                         "first_seen": now,
                         "last_seen": now,
@@ -1220,6 +1274,7 @@ def scrape_jobs(table_key: str, company_id: Optional[int] = None, og_only: bool 
         time.sleep(0.5)
 
     log.info(f"[{tbl}] Scraping complete. {total_matches} total matching jobs across {len(rows)} companies. {total_closed} stale job(s) closed.")
+    log.info(f"Locations unparsed on {unknown_locations} matching posting(s) — these bypass the US filter")
 
 
 # ----------------------------------------------------------------

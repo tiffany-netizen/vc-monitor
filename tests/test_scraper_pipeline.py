@@ -24,6 +24,50 @@ def test_title_location_salary_filters_basics():
     assert not job_scraper.salary_qualifies("$150,000 - $190,000")
 
 
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Partnerships Manager - CFO Solutions",
+        "Account Executive - CFO Solutions",
+        "CFO Consultant - Digital Health",
+        "CFO Support",
+        "For Accounting & CFO Firms",
+        "Legal & Business Operations Director (US)",
+    ],
+)
+def test_title_disqualified_rejects_vendor_and_sales_titles(title):
+    assert job_scraper.title_disqualified(title) is True
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "CFO",
+        "Chief of Staff",
+        "VP of Finance",
+        "Head of FP&A",
+        "Controller",
+        "Senior Director of Revenue Operations",
+        "Vice President, Strategic Finance",
+        "Director of Finance",
+    ],
+)
+def test_title_disqualified_keeps_real_targets(title):
+    assert job_scraper.title_disqualified(title) is False
+
+
+def test_location_status_three_states():
+    assert job_scraper.location_status("Warsaw, Poland") == "non_us"
+    assert job_scraper.location_status("New York, NY") == "us"
+    assert job_scraper.location_status("") == "unknown"
+    assert job_scraper.location_status("   ") == "unknown"
+
+
+def test_is_us_location_still_allows_unknown():
+    assert job_scraper.is_us_location("") is True
+    assert job_scraper.is_us_location("London, UK") is False
+
+
 def test_scrape_jobs_companies_inserts_only_matching_roles(monkeypatch):
     fake_companies = [
         {
@@ -78,12 +122,58 @@ def test_scrape_jobs_companies_inserts_only_matching_roles(monkeypatch):
     assert len(job_rows) == 1
     assert job_rows[0]["title"] == "VP of Operations"
     assert job_rows[0]["company_name"] == "Acme"
+    assert job_rows[0]["location"] == "Remote - US"
+    assert job_rows[0]["salary_text"] == "$250,000 - $280,000"
     assert job_rows[0]["dna_fit"] is True
 
     assert any(
         table == "companies" and filters == {"id": 11} and "last_scraped" in data
         for table, filters, data in patches
     )
+
+
+def test_scrape_jobs_counts_unknown_locations_after_other_filters(monkeypatch, caplog):
+    fake_companies = [
+        {
+            "id": 21,
+            "name": "Acme",
+            "website": "acme.com",
+            "careers_url": "https://acme.com/careers",
+            "ats_type": "generic",
+            "ats_slug": None,
+        }
+    ]
+    fake_jobs = [
+        {
+            "title": "Chief of Staff",
+            "location": "",
+            "salary_text": "$250,000",
+            "url": "https://acme.com/jobs/chief-of-staff",
+        },
+        {
+            "title": "Software Engineer",
+            "location": "",
+            "salary_text": "$250,000",
+            "url": "https://acme.com/jobs/software-engineer",
+        },
+    ]
+
+    def fake_sb_get(table, params, limit=1000):
+        if table == "companies" and "select" in params:
+            return fake_companies
+        return []
+
+    monkeypatch.setattr(job_scraper, "sb_get", fake_sb_get)
+    monkeypatch.setattr(job_scraper, "get_jobs_for_company", lambda _: fake_jobs)
+    monkeypatch.setattr(job_scraper, "url_is_live", lambda url, timeout=8: True)
+    monkeypatch.setattr(job_scraper.time, "sleep", lambda _: None)
+    monkeypatch.setattr(job_scraper, "sb_insert", lambda table, data: True)
+    monkeypatch.setattr(job_scraper, "sb_patch", lambda table, filters, data: True)
+
+    with caplog.at_level("INFO"):
+        job_scraper.scrape_jobs("companies")
+
+    assert "Locations unparsed on 1 matching posting(s) — these bypass the US filter" in caplog.text
 
 
 def test_scrape_jobs_existing_url_updates_instead_of_inserting(monkeypatch):
