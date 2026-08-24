@@ -71,3 +71,16 @@ jobs:
         env:
           MAKE_API_KEY: ${{ secrets.MAKE_API_KEY }}
         run: python job_scraper.py --chain-enrich
+
+      # Enrichment records a job change as TEXT and never moves people.company_id, so
+      # a person who left keeps being offered as the way in to the company they left.
+      # This moves the link. It runs after the chain because the chain call blocks
+      # until the Make run finishes. Never fails the workflow: a link left stale is a
+      # stale contact, not a lost scrape.
+      - name: Reconcile person -> company links
+        if: ${{ (github.event.inputs.mode || 'all') != 'discover' }}
+        continue-on-error: true
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python reconcile_links.py --apply
