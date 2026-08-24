@@ -70,12 +70,19 @@ SUPABASE_KEY = os.environ.get(
 
 MAKE_API_KEY = os.environ.get("MAKE_API_KEY", "")
 MAKE_API_BASE = os.environ.get("MAKE_API_BASE", "https://us1.make.com/api/v2")
-# Scenarios run in order after a scrape. Both must be ACTIVE in Make to run via API.
-#   4661650 = "S10: Apollo Org Enrichment"  (companies: funding / investors)
-#   4657611 = "contact enrichment"          (people: title/company + job changes)
+# Scenarios run in order after a scrape. Each must be ACTIVE in Make to run via API.
+#   4661650 = "S10: Apollo Org Enrichment"          (companies: funding / investors)
+#   4885994 = "S11 - Verify contact before outreach" (people: title/company + job changes)
+#
+# 4885994 replaces the old "contact enrichment" (4657611), which is left switched off.
+# The old one walked Recruiterflow's 50 most recently ADDED contacts, which are not the
+# people we are about to email. 4885994 asks the database instead: unverified,
+# non-investor contacts at a company with a live role, not checked in 30 days. So a
+# contact is verified before their role reaches the feed, and a contact behind a role
+# that has closed costs nothing.
 ENRICH_CHAIN = [
     (4661650, "S10 company enrichment"),
-    (4657611, "contact enrichment"),
+    (4885994, "S11 verify contact before outreach"),
 ]
 
 HEADERS_BROWSER = {
