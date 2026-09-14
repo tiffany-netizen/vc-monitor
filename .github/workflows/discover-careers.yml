@@ -35,7 +35,9 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install requests beautifulsoup4 lxml
+        run: |
+          pip install requests beautifulsoup4 lxml playwright
+          playwright install chromium --with-deps
 
       - name: Discover careers pages
         env:

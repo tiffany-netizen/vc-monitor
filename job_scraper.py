@@ -349,7 +349,10 @@ def salary_qualifies(salary_text: str) -> bool:
             values.append(int(val))
     if not values:
         return True
-    return min(values) >= MIN_SALARY
+    # Qualify on the TOP of the posted band. Requiring the minimum to clear the bar
+    # dropped bands that cross it ("$175K – $200K", "$194K – $227K") — measured
+    # 2026-09-14, that was 27% of genuine target roles. Single values are unchanged.
+    return max(values) >= MIN_SALARY
 
 
 # ----------------------------------------------------------------
@@ -385,6 +388,48 @@ def url_is_live(url: str, timeout: int = 8) -> bool:
         return resp.status_code not in (404, 410)
     except Exception:
         return True
+
+
+# A careers URL that answers 404/410 on this many separate scrape runs is treated as
+# moved for good: it gets cleared so weekly discovery hunts for the company's new page.
+# Bot-blocks, timeouts and 5xx never count as strikes (url_is_live fails open).
+DEAD_BOARD_STRIKES = 3
+
+
+def _board_probe_url(co: dict) -> str:
+    """The URL whose liveness proves the board is really gone. For Greenhouse and
+    Lever that is the ATS API endpoint the scraper actually reads — a company's
+    marketing page can stay alive long after its board slug dies."""
+    ats, slug = co.get("ats_type"), co.get("ats_slug")
+    if ats == "greenhouse" and slug:
+        return f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs"
+    if ats == "lever" and slug:
+        return f"https://api.lever.co/v0/postings/{slug}?mode=json"
+    return co.get("careers_url") or ""
+
+
+def _record_dead_board(tbl: str, co: dict, name: str, careers_url: str):
+    """Called when a company's board returned zero jobs. Without this, a company that
+    moves its board (new ATS, new slug) returns zero jobs forever — discovery only
+    ever looks at companies with NO stored careers_url.
+
+    Requires a careers_fail_streak int column on the table (see the PR that added
+    this). If the column is missing, the read/write here fails loudly in the log and
+    the scrape run continues unchanged."""
+    probe = _board_probe_url(co) or careers_url
+    if url_is_live(probe):
+        return
+    row = sb_get(tbl, {"id": f"eq.{co.get('id')}", "select": "careers_fail_streak"})
+    strikes = ((row[0].get("careers_fail_streak") if row else 0) or 0) + 1
+    if strikes >= DEAD_BOARD_STRIKES:
+        payload = {"careers_url": None, "ats_type": None, "ats_slug": None,
+                   "careers_fail_streak": 0}
+        log.info(f"  {name}: board dead ({strikes} strikes) — cleared for re-discovery: {probe}")
+    else:
+        payload = {"careers_fail_streak": strikes}
+        log.info(f"  {name}: board 404s (strike {strikes}/{DEAD_BOARD_STRIKES}): {probe}")
+    if not sb_patch(tbl, {"id": co.get("id")}, payload):
+        log_write_failure("PATCH", tbl, f"company={name} dead-board strikes={strikes}")
 
 
 # ----------------------------------------------------------------
@@ -443,6 +488,21 @@ def detect_ats(html: str, base_url: str) -> tuple[Optional[str], Optional[str], 
     return None, None, None
 
 
+def _careers_link_from_soup(soup: BeautifulSoup, base: str) -> Optional[str]:
+    """Find a careers/jobs link in parsed page HTML. Shared by the static homepage
+    scan and the Playwright fallback so both paths apply identical rules."""
+    careers_kw = ["career", "job", "hiring", "join us", "work with us", "open role"]
+    for link in soup.find_all("a", href=True):
+        href = link["href"].lower()
+        link_text = link.get_text().lower()
+        if any(kw in href or kw in link_text for kw in careers_kw):
+            full_url = urljoin(base, link["href"])
+            if any(s in full_url for s in ["linkedin", "twitter", "facebook", "instagram"]):
+                continue
+            return full_url
+    return None
+
+
 def find_careers_url(company_domain: str) -> Optional[str]:
     if not company_domain:
         return None
@@ -469,16 +529,27 @@ def find_careers_url(company_domain: str) -> Optional[str]:
     # Scan homepage for careers links
     resp = safe_get(base, timeout=10)
     if resp:
-        soup = BeautifulSoup(resp.text, "lxml")
-        careers_kw = ["career", "job", "hiring", "join us", "work with us", "open role"]
-        for link in soup.find_all("a", href=True):
-            href = link["href"].lower()
-            link_text = link.get_text().lower()
-            if any(kw in href or kw in link_text for kw in careers_kw):
-                full_url = urljoin(base, link["href"])
-                if any(s in full_url for s in ["linkedin", "twitter", "facebook", "instagram"]):
-                    continue
-                return full_url
+        hit = _careers_link_from_soup(BeautifulSoup(resp.text, "lxml"), base)
+        if hit:
+            return hit
+
+    # Last resort: the site bot-blocks plain HTTP (403/429) or renders its nav
+    # client-side, so the static passes above saw nothing. Render the homepage the
+    # same way scrape_generic does and re-run both detections on what a browser sees.
+    # A direct board URL from detect_ats is preferred: it is plain-fetchable, so the
+    # caller's ATS-detection re-fetch fills ats_type/ats_slug normally.
+    try:
+        for html in _render_careers_page(base):
+            ats_type, slug, direct = detect_ats(html, base)
+            if direct:
+                return direct
+            hit = _careers_link_from_soup(BeautifulSoup(html, "lxml"), base)
+            if hit:
+                return hit
+    except ImportError:
+        log.debug("Playwright not installed, skipping discovery JS fallback")
+    except Exception as e:
+        log.debug(f"Discovery Playwright fallback failed for {base}: {e}")
     return None
 
 
@@ -1049,6 +1120,9 @@ def discover_careers(table_key: str, og_only: bool = False):
 
     params = {
         "careers_url": "is.null",
+        # A company with no website has nothing to search — selecting those rows just
+        # produces a "Found 0/87 pages" line every run for companies that can never hit.
+        domain_col: "not.is.null",
         "select": f"id,{name_col},{domain_col}",
     }
     if og_only and tbl == "companies":
@@ -1143,6 +1217,7 @@ def scrape_jobs(table_key: str, company_id: Optional[int] = None, og_only: bool 
         jobs = get_jobs_for_company(co)
         if not jobs:
             log.warning(f"  {name}: 0 jobs returned (ATS: {co.get('ats_type') or 'generic'}, URL: {careers_url})")
+            _record_dead_board(tbl, co, name, careers_url)
         else:
             log.info(f"  {name}: {len(jobs)} total jobs found (ATS: {co.get('ats_type') or 'generic'})")
         matches = 0
