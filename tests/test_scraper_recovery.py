@@ -95,6 +95,32 @@ def test_careers_link_skips_social_profiles():
     assert job_scraper._careers_link_from_soup(soup, "https://acme.com") is None
 
 
+# ----------------------------------------------------------------
+# Single-company rescan CLI (uuid ids, table-aware)
+# ----------------------------------------------------------------
+
+def _run_main(monkeypatch, argv):
+    calls = []
+    monkeypatch.setattr(job_scraper, "SUPABASE_KEY", "test-key")
+    monkeypatch.setattr(job_scraper, "scrape_jobs",
+                        lambda table_key, company_id=None, og_only=False:
+                        calls.append((table_key, company_id)))
+    monkeypatch.setattr("sys.argv", ["job_scraper.py"] + argv)
+    job_scraper.main()
+    return calls
+
+
+def test_company_rescan_accepts_uuid_and_defaults_to_companies(monkeypatch):
+    # companies.id is a uuid — the old int-typed argument could never match one.
+    calls = _run_main(monkeypatch, ["--company", "cb15a6d9-e527-4bac-a92b-da02c657c368"])
+    assert calls == [("companies", "cb15a6d9-e527-4bac-a92b-da02c657c368")]
+
+
+def test_company_rescan_respects_table_choice(monkeypatch):
+    calls = _run_main(monkeypatch, ["--table", "vc", "--company", "123"])
+    assert calls == [("vc", "123")]
+
+
 def test_discovery_falls_back_to_playwright_when_static_fetch_is_blocked(monkeypatch):
     # Bot-blocked site: every static request fails, but the rendered homepage
     # exposes a Greenhouse board. Discovery should return the direct board URL.

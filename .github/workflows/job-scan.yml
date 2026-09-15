@@ -21,6 +21,10 @@ on:
         description: 'Mode (all, discover, scrape)'
         required: false
         default: 'all'
+      company_id:
+        description: 'Rescan one company by id (uuid for companies, numeric for vc); overrides mode'
+        required: false
+        default: ''
 
 jobs:
   scrape:
@@ -47,11 +51,22 @@ jobs:
         run: |
           TABLE="${{ github.event.inputs.table || 'both' }}"
           MODE="${{ github.event.inputs.mode || 'all' }}"
+          COMPANY="${{ github.event.inputs.company_id }}"
           OG_FLAG=""
           if [ "${{ github.event.inputs.og_only }}" = "true" ]; then
             OG_FLAG="--og-only"
           fi
           MODE_FLAG="--$MODE"
+
+          # Single-company rescan (dispatched from the GT dashboard agent's
+          # rescan_company tool). Chain enrichment below still fires.
+          if [ -n "$COMPANY" ]; then
+            T="$TABLE"
+            if [ "$T" = "both" ]; then T="companies"; fi
+            echo "=== Single company rescan ($T: $COMPANY) ==="
+            python job_scraper.py --table "$T" --company "$COMPANY"
+            exit 0
+          fi
 
           if [ "$TABLE" = "both" ] || [ "$TABLE" = "vc" ]; then
             echo "=== VC portfolio companies: $MODE ==="
