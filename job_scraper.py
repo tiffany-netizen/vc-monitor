@@ -20,9 +20,9 @@ Supabase prerequisites:
     - vc_portfolio_companies must have: careers_url, ats_type, ats_slug, last_scraped columns
     - vc_jobs table for VC job inserts
     - jobs table for companies job inserts
-    - companies.scrape_paused_until (nullable timestamptz) is optional. When set in the
-      future, bulk discover/scrape skips that company. If the column is not there yet,
-      the run logs once and treats every company as not paused. --company bypasses it.
+    - companies.scrape_paused_until (nullable timestamptz). Bulk discover/scrape skips a
+      company while that timestamp is still in the future (null or <= now is scraped).
+      --company bypasses it. GT Code's mark_draft_sent sets it to sent_at + 14 days.
     - RLS disabled (or service-role key) on all target tables
 """
 
@@ -101,46 +101,12 @@ def sb_headers(prefer: str = "return=minimal") -> dict:
     }
 
 
-# Set when a companies read proves scrape_paused_until is not on this database yet.
-# One warning per process, then discover/scrape proceed as if nobody is paused.
-_SCRAPE_PAUSE_COLUMN_MISSING = False
-# Body of the most recent sb_get failure (empty after a success). Callers that can
-# tolerate a not-yet-migrated column inspect this instead of treating [] as "no rows".
-_LAST_SB_GET_ERROR = ""
-
-
-def _exception_detail(exc: Exception) -> str:
-    """Include the response body. requests' HTTPError string is only the status line,
-    and PostgREST puts 'column ... does not exist' in the body."""
-    parts = [str(exc)]
-    resp = getattr(exc, "response", None)
-    if resp is not None:
-        body = getattr(resp, "text", "") or ""
-        if body:
-            parts.append(str(body))
-    return " ".join(parts)
-
-
-def _is_missing_column_error(detail: str, column: str) -> bool:
-    text = (detail or "").lower()
-    if column.lower() not in text:
-        return False
-    return (
-        "does not exist" in text
-        or "42703" in text
-        or "schema cache" in text
-        or "pgrst204" in text
-    )
-
-
 # ----------------------------------------------------------------
 # SUPABASE HELPERS
 # ----------------------------------------------------------------
 
 def sb_get(table: str, params: dict, limit: int = 1000) -> list[dict]:
     """GET rows from a Supabase table with query params as filters. Paginates automatically."""
-    global _LAST_SB_GET_ERROR
-    _LAST_SB_GET_ERROR = ""
     url = f"{SUPABASE_URL}/{table}"
     all_rows = []
     offset = 0
@@ -152,12 +118,7 @@ def sb_get(table: str, params: dict, limit: int = 1000) -> list[dict]:
             resp.raise_for_status()
             batch = resp.json() if resp.text else []
         except Exception as e:
-            _LAST_SB_GET_ERROR = _exception_detail(e)
-            # A not-yet-migrated scrape_paused_until is handled by the companies
-            # loader, which logs once and retries without the column. Don't also
-            # emit this as a hard GET failure.
-            if not _is_missing_column_error(_LAST_SB_GET_ERROR, "scrape_paused_until"):
-                log.error(f"Supabase GET {table} failed: {e}")
+            log.error(f"Supabase GET {table} failed: {e}")
             break
         if not batch:
             break
@@ -1191,8 +1152,8 @@ def _scrape_pause_active(row: dict, now: datetime) -> bool:
 
 
 def _pause_or_filter(now: datetime) -> str:
-    # Skip only while the timestamp is strictly after now, so a pause that has
-    # elapsed (or lands on this second) stays in the candidate set.
+    # Keep a company when scrape_paused_until is null OR <= now. Quoted so the
+    # colons in the timestamp survive PostgREST's `or` parser.
     stamp = now.strftime("%Y-%m-%dT%H:%M:%SZ")
     return f'(scrape_paused_until.is.null,scrape_paused_until.lte."{stamp}")'
 
@@ -1202,51 +1163,25 @@ def _pause_gt_filter(now: datetime) -> str:
     return f'gt."{stamp}"'
 
 
-def _note_scrape_pause_column_missing() -> None:
-    global _SCRAPE_PAUSE_COLUMN_MISSING
-    if _SCRAPE_PAUSE_COLUMN_MISSING:
-        return
-    _SCRAPE_PAUSE_COLUMN_MISSING = True
-    log.warning(
-        "companies.scrape_paused_until is missing; treating companies as not scrape-paused"
-    )
-
-
 def _load_company_candidates(params: dict) -> list[dict]:
     """Fetch `companies` rows, dropping any whose scrape pause is still in the future.
 
-    The pause is applied as a PostgREST `or` on top of whatever else is in
-    `params` (dna_fit, careers_url, OG). If the column has not been migrated
-    yet, log once and run the original query so CI and local runs don't die
-    mid-migration. A row that still comes back paused is dropped client-side.
+    The pause is a PostgREST `or` on top of whatever else is in `params`
+    (dna_fit, careers_url, OG): scrape_paused_until is null OR <= now.
+    A paused row that still comes back is dropped before it is scraped.
     """
-    global _LAST_SB_GET_ERROR
     now = _scrape_pause_deadline()
-    if _SCRAPE_PAUSE_COLUMN_MISSING:
-        log.info("[companies] skipped 0 companies due to scrape pause")
-        return sb_get("companies", dict(params))
-
     filtered = dict(params)
     select = filtered.get("select")
     if isinstance(select, str) and "scrape_paused_until" not in [c.strip() for c in select.split(",")]:
         filtered["select"] = select + ",scrape_paused_until"
     filtered["or"] = _pause_or_filter(now)
-
-    _LAST_SB_GET_ERROR = ""
     rows = sb_get("companies", filtered)
-    if _is_missing_column_error(_LAST_SB_GET_ERROR, "scrape_paused_until"):
-        _note_scrape_pause_column_missing()
-        log.info("[companies] skipped 0 companies due to scrape pause")
-        return sb_get("companies", dict(params))
 
     count_params = dict(params)
     count_params["select"] = "id"
     count_params["scrape_paused_until"] = _pause_gt_filter(now)
-    _LAST_SB_GET_ERROR = ""
     paused_rows = sb_get("companies", count_params)
-    if _is_missing_column_error(_LAST_SB_GET_ERROR, "scrape_paused_until"):
-        _note_scrape_pause_column_missing()
-        paused_rows = []
 
     paused_ids = {row.get("id") for row in paused_rows if row.get("id") is not None}
     kept = []

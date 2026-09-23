@@ -12,8 +12,6 @@ def _stub_stale_close(monkeypatch):
     """Stage-4 stale-close hits Supabase over the network. Stub it out by default so no
     test touches the real DB; tests that assert on it re-patch sb_patch_where themselves."""
     monkeypatch.setattr(job_scraper, "sb_patch_where", lambda table, params, data: 0, raising=False)
-    monkeypatch.setattr(job_scraper, "_SCRAPE_PAUSE_COLUMN_MISSING", False)
-    monkeypatch.setattr(job_scraper, "_LAST_SB_GET_ERROR", "")
 
 
 def test_title_location_salary_filters_basics():
@@ -662,55 +660,6 @@ def test_forced_company_bypasses_scrape_pause(monkeypatch, caplog):
     assert company_queries == [{"id": "eq.9"}]
     assert scraped == [9]
     assert "bypass because a single company was forced" in caplog.text
-
-
-def test_missing_scrape_paused_until_column_does_not_drop_companies(monkeypatch, caplog):
-    """A database that doesn't have the column yet still discovers companies."""
-    job_scraper._SCRAPE_PAUSE_COLUMN_MISSING = False
-    seen = []
-
-    class _Resp:
-        def __init__(self, status, payload, text=None):
-            self.status_code = status
-            self._payload = payload
-            # sb_get treats an empty body as no rows and never calls json().
-            self.text = "[]" if text is None else text
-
-        def raise_for_status(self):
-            if self.status_code >= 400:
-                err = job_scraper.requests.HTTPError(str(self.status_code))
-                err.response = self
-                raise err
-
-        def json(self):
-            return self._payload
-
-    def fake_get(url, headers=None, params=None, timeout=15):
-        seen.append(dict(params or {}))
-        if params and ("or" in params or "scrape_paused_until" in params):
-            return _Resp(
-                400,
-                {},
-                text='{"code":"42703","message":"column companies.scrape_paused_until does not exist"}',
-            )
-        return _Resp(200, [{"id": 2, "name": "Acme", "website": "acme.com"}])
-
-    monkeypatch.setattr(job_scraper.requests, "get", fake_get)
-
-    with caplog.at_level("WARNING"):
-        rows = job_scraper._load_company_candidates(
-            {"select": "id,name,website", "dna_fit": "eq.true"},
-        )
-        seen.clear()
-        rows_again = job_scraper._load_company_candidates(
-            {"select": "id,name,website", "dna_fit": "eq.true"},
-        )
-
-    assert rows == [{"id": 2, "name": "Acme", "website": "acme.com"}]
-    assert rows_again == [{"id": 2, "name": "Acme", "website": "acme.com"}]
-    assert seen and all("or" not in params for params in seen)
-    assert all("scrape_paused_until" not in params for params in seen)
-    assert caplog.text.count("scrape_paused_until is missing") == 1
 
 
 def test_vc_bulk_paths_ignore_scrape_pause_and_dna_off(monkeypatch):
