@@ -21,6 +21,10 @@ on:
         description: 'Mode (all, discover, scrape)'
         required: false
         default: 'all'
+      company_id:
+        description: 'Rescan one company by id (uuid for companies, numeric for vc); overrides mode'
+        required: false
+        default: ''
 
 jobs:
   scrape:
@@ -41,17 +45,39 @@ jobs:
           playwright install chromium --with-deps
 
       - name: Run scraper
+        # Inputs reach the shell ONLY through env. Interpolating ${{ inputs.* }} into
+        # the run block expands them into script TEXT before bash runs — a crafted
+        # dispatch input would execute on the runner with access to SUPABASE_KEY.
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          TABLE_INPUT: ${{ github.event.inputs.table || 'both' }}
+          MODE_INPUT: ${{ github.event.inputs.mode || 'all' }}
+          COMPANY_INPUT: ${{ github.event.inputs.company_id }}
+          OG_ONLY_INPUT: ${{ github.event.inputs.og_only }}
         run: |
-          TABLE="${{ github.event.inputs.table || 'both' }}"
-          MODE="${{ github.event.inputs.mode || 'all' }}"
+          TABLE="$TABLE_INPUT"
+          MODE="$MODE_INPUT"
+          COMPANY="$COMPANY_INPUT"
           OG_FLAG=""
-          if [ "${{ github.event.inputs.og_only }}" = "true" ]; then
+          if [ "$OG_ONLY_INPUT" = "true" ]; then
             OG_FLAG="--og-only"
           fi
           MODE_FLAG="--$MODE"
+
+          # Single-company rescan (dispatched from the GT dashboard agent's
+          # rescan_company tool). Chain enrichment below still fires.
+          if [ -n "$COMPANY" ]; then
+            if ! printf '%s' "$COMPANY" | grep -Eq '^[0-9a-fA-F-]+$'; then
+              echo "Invalid company_id: must be a uuid or numeric id" >&2
+              exit 1
+            fi
+            T="$TABLE"
+            if [ "$T" = "both" ]; then T="companies"; fi
+            echo "=== Single company rescan ($T: $COMPANY) ==="
+            python job_scraper.py --table "$T" --company "$COMPANY"
+            exit 0
+          fi
 
           if [ "$TABLE" = "both" ] || [ "$TABLE" = "vc" ]; then
             echo "=== VC portfolio companies: $MODE ==="

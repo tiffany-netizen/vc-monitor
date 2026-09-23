@@ -14,7 +14,8 @@ Usage:
     python job_scraper.py --table companies --discover   # discover for machine list only
     python job_scraper.py --table vc --discover          # discover for VC list only
     python job_scraper.py --table vc --scrape            # scrape jobs for VC list only
-    python job_scraper.py --company 123                  # scrape a single company by id (companies table)
+    python job_scraper.py --company <uuid>               # rescan one company (companies table)
+    python job_scraper.py --table vc --company 123       # rescan one company (vc table)
 
 Supabase prerequisites:
     - vc_portfolio_companies must have: careers_url, ats_type, ats_slug, last_scraped columns
@@ -1175,7 +1176,7 @@ def discover_careers(table_key: str, og_only: bool = False):
     log.info(f"[{tbl}] Careers discovery complete. Found {found}/{len(rows)} pages.")
 
 
-def scrape_jobs(table_key: str, company_id: Optional[int] = None, og_only: bool = False):
+def scrape_jobs(table_key: str, company_id: Optional[str] = None, og_only: bool = False):
     """Scrape jobs for all companies (or one specific company)."""
     cfg = TABLE_CONFIG[table_key]
     tbl = cfg["table"]
@@ -1403,7 +1404,11 @@ def main():
                         help="Which table to run against (default: both)")
     parser.add_argument("--og-only", action="store_true",
                         help="Only process companies with OG members (companies table only)")
-    parser.add_argument("--company", type=int, help="Scrape a single company by ID (companies table)")
+    # No type=int: companies.id is a uuid, vc_portfolio_companies.id is numeric —
+    # the old int-only version could never match a companies row.
+    parser.add_argument("--company",
+                        help="Scrape one company by id (uuid for companies, numeric for vc); "
+                             "targets --table, default companies")
     parser.add_argument("--chain-enrich", action="store_true",
                         help="Only fire the Make enrichment chain (company then contact); no scraping")
     args = parser.parse_args()
@@ -1421,7 +1426,8 @@ def main():
     tables = ["companies", "vc"] if args.table == "both" else [args.table]
 
     if args.company:
-        scrape_jobs("companies", company_id=args.company)
+        target = "companies" if args.table == "both" else args.table
+        scrape_jobs(target, company_id=args.company)
     elif args.discover:
         for t in tables:
             discover_careers(t, og_only=args.og_only)
