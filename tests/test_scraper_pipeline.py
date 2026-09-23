@@ -1,4 +1,5 @@
 import sys
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -11,6 +12,8 @@ def _stub_stale_close(monkeypatch):
     """Stage-4 stale-close hits Supabase over the network. Stub it out by default so no
     test touches the real DB; tests that assert on it re-patch sb_patch_where themselves."""
     monkeypatch.setattr(job_scraper, "sb_patch_where", lambda table, params, data: 0, raising=False)
+    monkeypatch.setattr(job_scraper, "_SCRAPE_PAUSE_COLUMN_MISSING", False)
+    monkeypatch.setattr(job_scraper, "_LAST_SB_GET_ERROR", "")
 
 
 def test_title_location_salary_filters_basics():
@@ -112,6 +115,7 @@ def test_scrape_jobs_companies_inserts_only_matching_roles(monkeypatch):
 
     monkeypatch.setattr(job_scraper, "sb_get", fake_sb_get)
     monkeypatch.setattr(job_scraper, "get_jobs_for_company", lambda _: fake_jobs)
+    monkeypatch.setattr(job_scraper, "url_is_live", lambda url, timeout=8: True)
     monkeypatch.setattr(job_scraper.time, "sleep", lambda _: None)
     monkeypatch.setattr(job_scraper, "sb_insert", lambda table, data: inserts.append((table, data)) or True)
     monkeypatch.setattr(job_scraper, "sb_patch", lambda table, filters, data: patches.append((table, filters, data)) or True)
@@ -456,6 +460,286 @@ def test_scrape_jobs_vc_stale_close_uses_active_flag(monkeypatch):
     assert data == {"active": False}
 
 
+def test_dna_off_close_sets_open_jobs_to_closed(monkeypatch, caplog):
+    """Companies that are no longer dna_fit still have new/active jobs closed.
+
+    A still-fit company returned by a sloppy filter is left alone. The patch
+    matches the per-company stale-close: status in (new, active) -> closed.
+    """
+    queries = []
+
+    def fake_sb_get(table, params, limit=1000):
+        queries.append((table, dict(params)))
+        if table == "jobs":
+            return [
+                {"company_id": 7},
+                {"company_id": 8},
+                {"company_id": 7},
+                {"company_id": None},
+                {"company_id": 9},
+            ]
+        if table == "companies":
+            assert "dna_fit.eq.false" in params["or"]
+            assert "dna_fit.is.null" in params["or"]
+            assert params["id"] == "in.(7,8,9)"
+            return [
+                {"id": 7, "dna_fit": False},
+                {"id": 8, "dna_fit": True},
+                {"id": 9, "dna_fit": None},
+            ]
+        return []
+
+    patches = []
+
+    def fake_patch(table, params, data):
+        patches.append((table, dict(params), dict(data)))
+        return 4
+
+    monkeypatch.setattr(job_scraper, "sb_get", fake_sb_get)
+    monkeypatch.setattr(job_scraper, "sb_patch_where", fake_patch)
+
+    with caplog.at_level("INFO"):
+        n = job_scraper.close_open_jobs_for_dna_off_companies()
+
+    assert n == 4
+    assert patches == [(
+        "jobs",
+        {"company_id": "in.(7,9)", "status": "in.(new,active)"},
+        {"status": "closed"},
+    )]
+    assert queries[0][0] == "jobs"
+    assert queries[0][1]["status"] == "in.(new,active)"
+    assert "DNA-off close: closed 4 open job(s)" in caplog.text
+
+
+def test_dna_off_close_runs_on_company_scrape_not_vc_or_forced_id(monkeypatch):
+    """The sweep is the start of a bulk companies scrape (--scrape / --all)."""
+    calls = []
+    monkeypatch.setattr(
+        job_scraper,
+        "close_open_jobs_for_dna_off_companies",
+        lambda: calls.append("close") or 0,
+    )
+    monkeypatch.setattr(job_scraper, "sb_get", lambda table, params, limit=1000: [])
+    monkeypatch.setattr(job_scraper.time, "sleep", lambda _: None)
+
+    job_scraper.scrape_jobs("companies")
+    job_scraper.scrape_jobs("vc")
+    job_scraper.scrape_jobs("companies", company_id=3)
+    job_scraper.discover_careers("vc")
+
+    assert calls == ["close"]
+
+
+def test_future_scrape_pause_excluded_null_and_past_still_run(monkeypatch, caplog):
+    """Bulk discover and scrape skip a company paused until a future timestamp.
+
+    Null and already-elapsed pauses stay in the candidate set. The PostgREST
+    filter is part of the companies query (with dna_fit=true); a paused row that
+    still comes back is dropped before any careers or job fetch.
+    """
+    now = datetime.now(UTC)
+    future = (now + timedelta(days=14)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    past = (now - timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    paused = {
+        "id": 1, "name": "Paused", "website": "paused.example",
+        "careers_url": "https://paused.example/careers",
+        "ats_type": "generic", "ats_slug": None,
+        "scrape_paused_until": future,
+    }
+    clear = {
+        "id": 2, "name": "Clear", "website": "clear.example",
+        "careers_url": "https://clear.example/careers",
+        "ats_type": "generic", "ats_slug": None,
+        "scrape_paused_until": None,
+    }
+    elapsed = {
+        "id": 3, "name": "Elapsed", "website": "elapsed.example",
+        "careers_url": "https://elapsed.example/careers",
+        "ats_type": "generic", "ats_slug": None,
+        "scrape_paused_until": past,
+    }
+    candidate_queries = []
+
+    def fake_sb_get(table, params, limit=1000):
+        if table != "companies":
+            return []
+        if str(params.get("scrape_paused_until", "")).startswith("gt."):
+            return [{"id": 1}]
+        if "or" in params:
+            candidate_queries.append(dict(params))
+            return [paused, clear, elapsed]
+        return []
+
+    discovered = []
+    scraped = []
+    closes = []
+
+    monkeypatch.setattr(job_scraper, "sb_get", fake_sb_get)
+    monkeypatch.setattr(job_scraper, "sb_patch", lambda table, filters, data: discovered.append(filters["id"]) or True)
+    monkeypatch.setattr(job_scraper, "find_careers_url", lambda domain: None)
+    monkeypatch.setattr(
+        job_scraper,
+        "get_jobs_for_company",
+        lambda co: scraped.append(co["id"]) or [{
+            "title": "Intern",
+            "location": "Remote - US",
+            "salary_text": "",
+            "url": "https://example.com/jobs/intern",
+        }],
+    )
+    monkeypatch.setattr(
+        job_scraper,
+        "close_open_jobs_for_dna_off_companies",
+        lambda: closes.append("close") or 0,
+    )
+    monkeypatch.setattr(job_scraper.time, "sleep", lambda _: None)
+
+    with caplog.at_level("INFO"):
+        job_scraper.discover_careers("companies")
+        assert discovered == [2, 3]
+        job_scraper.scrape_jobs("companies")
+
+    assert scraped == [2, 3]
+    assert closes == ["close"]
+    assert caplog.text.count("skipped 1 companies due to scrape pause") == 2
+    assert len(candidate_queries) == 2
+    for params in candidate_queries:
+        assert params["dna_fit"] == "eq.true"
+        assert "scrape_paused_until.is.null" in params["or"]
+        assert "scrape_paused_until.lte." in params["or"]
+
+
+def test_scrape_pause_active_is_only_a_future_timestamp():
+    now = datetime(2026, 9, 23, 2, 0, tzinfo=UTC)
+    assert job_scraper._scrape_pause_active({}, now) is False
+    assert job_scraper._scrape_pause_active({"scrape_paused_until": None}, now) is False
+    assert job_scraper._scrape_pause_active(
+        {"scrape_paused_until": "2026-09-22T00:00:00Z"}, now,
+    ) is False
+    assert job_scraper._scrape_pause_active(
+        {"scrape_paused_until": "2026-09-23T02:00:00Z"}, now,
+    ) is False
+    assert job_scraper._scrape_pause_active(
+        {"scrape_paused_until": "2026-10-07T00:00:00+00:00"}, now,
+    ) is True
+
+
+def test_forced_company_bypasses_scrape_pause(monkeypatch, caplog):
+    future = (datetime.now(UTC) + timedelta(days=14)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    seen = []
+
+    def fake_sb_get(table, params, limit=1000):
+        seen.append((table, dict(params)))
+        if table == "companies":
+            return [{
+                "id": 9,
+                "name": "Paused",
+                "website": "paused.example",
+                "careers_url": "https://paused.example/careers",
+                "ats_type": "generic",
+                "ats_slug": None,
+                "scrape_paused_until": future,
+            }]
+        return []
+
+    scraped = []
+    monkeypatch.setattr(job_scraper, "sb_get", fake_sb_get)
+    monkeypatch.setattr(job_scraper, "sb_patch", lambda *a, **k: True)
+    monkeypatch.setattr(job_scraper, "sb_insert", lambda *a, **k: True)
+    monkeypatch.setattr(
+        job_scraper,
+        "get_jobs_for_company",
+        lambda co: scraped.append(co["id"]) or [],
+    )
+    monkeypatch.setattr(job_scraper, "url_is_live", lambda url, timeout=8: True)
+    monkeypatch.setattr(job_scraper.time, "sleep", lambda _: None)
+
+    with caplog.at_level("INFO"):
+        job_scraper.scrape_jobs("companies", company_id=9)
+
+    company_queries = [params for table, params in seen if table == "companies"]
+    assert company_queries == [{"id": "eq.9"}]
+    assert scraped == [9]
+    assert "bypass because a single company was forced" in caplog.text
+
+
+def test_missing_scrape_paused_until_column_does_not_drop_companies(monkeypatch, caplog):
+    """A database that doesn't have the column yet still discovers companies."""
+    job_scraper._SCRAPE_PAUSE_COLUMN_MISSING = False
+    seen = []
+
+    class _Resp:
+        def __init__(self, status, payload, text=None):
+            self.status_code = status
+            self._payload = payload
+            # sb_get treats an empty body as no rows and never calls json().
+            self.text = "[]" if text is None else text
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                err = job_scraper.requests.HTTPError(str(self.status_code))
+                err.response = self
+                raise err
+
+        def json(self):
+            return self._payload
+
+    def fake_get(url, headers=None, params=None, timeout=15):
+        seen.append(dict(params or {}))
+        if params and ("or" in params or "scrape_paused_until" in params):
+            return _Resp(
+                400,
+                {},
+                text='{"code":"42703","message":"column companies.scrape_paused_until does not exist"}',
+            )
+        return _Resp(200, [{"id": 2, "name": "Acme", "website": "acme.com"}])
+
+    monkeypatch.setattr(job_scraper.requests, "get", fake_get)
+
+    with caplog.at_level("WARNING"):
+        rows = job_scraper._load_company_candidates(
+            {"select": "id,name,website", "dna_fit": "eq.true"},
+        )
+        seen.clear()
+        rows_again = job_scraper._load_company_candidates(
+            {"select": "id,name,website", "dna_fit": "eq.true"},
+        )
+
+    assert rows == [{"id": 2, "name": "Acme", "website": "acme.com"}]
+    assert rows_again == [{"id": 2, "name": "Acme", "website": "acme.com"}]
+    assert seen and all("or" not in params for params in seen)
+    assert all("scrape_paused_until" not in params for params in seen)
+    assert caplog.text.count("scrape_paused_until is missing") == 1
+
+
+def test_vc_bulk_paths_ignore_scrape_pause_and_dna_off(monkeypatch):
+    calls = []
+    closes = []
+
+    def fake_sb_get(table, params, limit=1000):
+        calls.append((table, dict(params)))
+        return []
+
+    monkeypatch.setattr(job_scraper, "sb_get", fake_sb_get)
+    monkeypatch.setattr(
+        job_scraper,
+        "close_open_jobs_for_dna_off_companies",
+        lambda: closes.append(1) or 0,
+    )
+    monkeypatch.setattr(job_scraper.time, "sleep", lambda _: None)
+
+    job_scraper.discover_careers("vc")
+    job_scraper.scrape_jobs("vc")
+
+    assert closes == []
+    assert calls
+    for _table, params in calls:
+        blob = " ".join(str(v) for v in params.values())
+        assert "scrape_paused_until" not in blob
+        assert "dna_fit" not in params
+
+
 def test_vc_monitor_scan_all_jobs_sets_dna_fit_on_insert(monkeypatch):
     fake_companies = [
         {
@@ -632,6 +916,7 @@ def test_scrape_logs_supabase_write_failures(monkeypatch, caplog):
 
     monkeypatch.setattr(job_scraper, "sb_get", fake_sb_get)
     monkeypatch.setattr(job_scraper, "get_jobs_for_company", lambda _: fake_jobs)
+    monkeypatch.setattr(job_scraper, "url_is_live", lambda url, timeout=8: True)
     monkeypatch.setattr(job_scraper.time, "sleep", lambda _: None)
     monkeypatch.setattr(job_scraper, "sb_insert", lambda table, data: False)
     monkeypatch.setattr(job_scraper, "sb_patch", lambda table, filters, data: True)
@@ -714,6 +999,7 @@ def test_discover_then_scrape_smoke_flow(monkeypatch):
         "salary_text": "$250,000",
         "url": "https://acme.com/careers/vp-ops",
     }])
+    monkeypatch.setattr(job_scraper, "url_is_live", lambda url, timeout=8: True)
     monkeypatch.setattr(job_scraper.time, "sleep", lambda _: None)
 
     job_scraper.discover_careers("companies")

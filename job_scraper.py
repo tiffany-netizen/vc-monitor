@@ -14,12 +14,15 @@ Usage:
     python job_scraper.py --table companies --discover   # discover for machine list only
     python job_scraper.py --table vc --discover          # discover for VC list only
     python job_scraper.py --table vc --scrape            # scrape jobs for VC list only
-    python job_scraper.py --company 123                  # scrape a single company by id (companies table)
+    python job_scraper.py --company 123                  # scrape one company (bypasses scrape pause)
 
 Supabase prerequisites:
     - vc_portfolio_companies must have: careers_url, ats_type, ats_slug, last_scraped columns
     - vc_jobs table for VC job inserts
     - jobs table for companies job inserts
+    - companies.scrape_paused_until (nullable timestamptz) is optional. When set in the
+      future, bulk discover/scrape skips that company. If the column is not there yet,
+      the run logs once and treats every company as not paused. --company bypasses it.
     - RLS disabled (or service-role key) on all target tables
 """
 
@@ -98,12 +101,46 @@ def sb_headers(prefer: str = "return=minimal") -> dict:
     }
 
 
+# Set when a companies read proves scrape_paused_until is not on this database yet.
+# One warning per process, then discover/scrape proceed as if nobody is paused.
+_SCRAPE_PAUSE_COLUMN_MISSING = False
+# Body of the most recent sb_get failure (empty after a success). Callers that can
+# tolerate a not-yet-migrated column inspect this instead of treating [] as "no rows".
+_LAST_SB_GET_ERROR = ""
+
+
+def _exception_detail(exc: Exception) -> str:
+    """Include the response body. requests' HTTPError string is only the status line,
+    and PostgREST puts 'column ... does not exist' in the body."""
+    parts = [str(exc)]
+    resp = getattr(exc, "response", None)
+    if resp is not None:
+        body = getattr(resp, "text", "") or ""
+        if body:
+            parts.append(str(body))
+    return " ".join(parts)
+
+
+def _is_missing_column_error(detail: str, column: str) -> bool:
+    text = (detail or "").lower()
+    if column.lower() not in text:
+        return False
+    return (
+        "does not exist" in text
+        or "42703" in text
+        or "schema cache" in text
+        or "pgrst204" in text
+    )
+
+
 # ----------------------------------------------------------------
 # SUPABASE HELPERS
 # ----------------------------------------------------------------
 
 def sb_get(table: str, params: dict, limit: int = 1000) -> list[dict]:
     """GET rows from a Supabase table with query params as filters. Paginates automatically."""
+    global _LAST_SB_GET_ERROR
+    _LAST_SB_GET_ERROR = ""
     url = f"{SUPABASE_URL}/{table}"
     all_rows = []
     offset = 0
@@ -115,7 +152,12 @@ def sb_get(table: str, params: dict, limit: int = 1000) -> list[dict]:
             resp.raise_for_status()
             batch = resp.json() if resp.text else []
         except Exception as e:
-            log.error(f"Supabase GET {table} failed: {e}")
+            _LAST_SB_GET_ERROR = _exception_detail(e)
+            # A not-yet-migrated scrape_paused_until is handled by the companies
+            # loader, which logs once and retries without the column. Don't also
+            # emit this as a hard GET failure.
+            if not _is_missing_column_error(_LAST_SB_GET_ERROR, "scrape_paused_until"):
+                log.error(f"Supabase GET {table} failed: {e}")
             break
         if not batch:
             break
@@ -1111,6 +1153,193 @@ def extract_domain(website: str) -> Optional[str]:
         return None
 
 
+def _scrape_pause_deadline(now: Optional[datetime] = None) -> datetime:
+    """UTC timestamp truncated to a second, so the PostgREST filter and the
+    client-side check agree on the same instant."""
+    current = now or datetime.now(UTC)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=UTC)
+    return current.astimezone(UTC).replace(microsecond=0)
+
+
+def _parse_timestamptz(value) -> Optional[datetime]:
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        try:
+            dt = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
+
+
+def _scrape_pause_active(row: dict, now: datetime) -> bool:
+    """True when scrape_paused_until is set and still in the future."""
+    until = _parse_timestamptz(row.get("scrape_paused_until"))
+    if until is None:
+        return False
+    return until > now
+
+
+def _pause_or_filter(now: datetime) -> str:
+    # Skip only while the timestamp is strictly after now, so a pause that has
+    # elapsed (or lands on this second) stays in the candidate set.
+    stamp = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    return f'(scrape_paused_until.is.null,scrape_paused_until.lte."{stamp}")'
+
+
+def _pause_gt_filter(now: datetime) -> str:
+    stamp = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    return f'gt."{stamp}"'
+
+
+def _note_scrape_pause_column_missing() -> None:
+    global _SCRAPE_PAUSE_COLUMN_MISSING
+    if _SCRAPE_PAUSE_COLUMN_MISSING:
+        return
+    _SCRAPE_PAUSE_COLUMN_MISSING = True
+    log.warning(
+        "companies.scrape_paused_until is missing; treating companies as not scrape-paused"
+    )
+
+
+def _load_company_candidates(params: dict) -> list[dict]:
+    """Fetch `companies` rows, dropping any whose scrape pause is still in the future.
+
+    The pause is applied as a PostgREST `or` on top of whatever else is in
+    `params` (dna_fit, careers_url, OG). If the column has not been migrated
+    yet, log once and run the original query so CI and local runs don't die
+    mid-migration. A row that still comes back paused is dropped client-side.
+    """
+    global _LAST_SB_GET_ERROR
+    now = _scrape_pause_deadline()
+    if _SCRAPE_PAUSE_COLUMN_MISSING:
+        log.info("[companies] skipped 0 companies due to scrape pause")
+        return sb_get("companies", dict(params))
+
+    filtered = dict(params)
+    select = filtered.get("select")
+    if isinstance(select, str) and "scrape_paused_until" not in [c.strip() for c in select.split(",")]:
+        filtered["select"] = select + ",scrape_paused_until"
+    filtered["or"] = _pause_or_filter(now)
+
+    _LAST_SB_GET_ERROR = ""
+    rows = sb_get("companies", filtered)
+    if _is_missing_column_error(_LAST_SB_GET_ERROR, "scrape_paused_until"):
+        _note_scrape_pause_column_missing()
+        log.info("[companies] skipped 0 companies due to scrape pause")
+        return sb_get("companies", dict(params))
+
+    count_params = dict(params)
+    count_params["select"] = "id"
+    count_params["scrape_paused_until"] = _pause_gt_filter(now)
+    _LAST_SB_GET_ERROR = ""
+    paused_rows = sb_get("companies", count_params)
+    if _is_missing_column_error(_LAST_SB_GET_ERROR, "scrape_paused_until"):
+        _note_scrape_pause_column_missing()
+        paused_rows = []
+
+    paused_ids = {row.get("id") for row in paused_rows if row.get("id") is not None}
+    kept = []
+    extra = 0
+    for row in rows:
+        if _scrape_pause_active(row, now):
+            if row.get("id") not in paused_ids:
+                extra += 1
+            continue
+        kept.append(row)
+    log.info(f"[companies] skipped {len(paused_rows) + extra} companies due to scrape pause")
+    return kept
+
+
+_DNA_OFF_ID_BATCH = 80
+
+
+def _postgrest_in(ids) -> Optional[str]:
+    parts = []
+    for raw in ids:
+        try:
+            parts.append(str(int(raw)))
+        except (TypeError, ValueError):
+            log.warning(f"[companies] DNA-off close: skipping non-integer company id {raw!r}")
+    if not parts:
+        return None
+    return "in.(" + ",".join(parts) + ")"
+
+
+def _chunks(items: list, size: int):
+    for i in range(0, len(items), size):
+        yield items[i:i + size]
+
+
+def close_open_jobs_for_dna_off_companies() -> int:
+    """Close jobs still new/active at companies that are no longer dna_fit.
+
+    Bulk discover/scrape only visits dna_fit=true, so the per-company stale-close
+    never runs once dna_fit flips off and those roles stay open. Called at the
+    start of a companies scrape (--scrape and --all). Does not touch Recruiterflow.
+    VC portfolio tables are out of scope (no dna_fit there).
+    """
+    open_rows = sb_get("jobs", {
+        "select": "company_id",
+        "status": "in.(new,active)",
+        "company_id": "not.is.null",
+    })
+    company_ids = []
+    seen = set()
+    for row in open_rows:
+        cid = row.get("company_id")
+        if cid is None or cid in seen:
+            continue
+        seen.add(cid)
+        company_ids.append(cid)
+    if not company_ids:
+        log.info("[companies] DNA-off close: closed 0 open job(s)")
+        return 0
+
+    dna_off_ids = []
+    for chunk in _chunks(company_ids, _DNA_OFF_ID_BATCH):
+        id_filter = _postgrest_in(chunk)
+        if not id_filter:
+            continue
+        matched = sb_get("companies", {
+            "select": "id,dna_fit",
+            "id": id_filter,
+            "or": "(dna_fit.eq.false,dna_fit.is.null)",
+        })
+        for row in matched:
+            # Belt: a true fit must never be closed, even if the filter was ignored.
+            if row.get("dna_fit") is True or row.get("id") is None:
+                continue
+            dna_off_ids.append(row["id"])
+
+    total = 0
+    for chunk in _chunks(dna_off_ids, _DNA_OFF_ID_BATCH):
+        id_filter = _postgrest_in(chunk)
+        if not id_filter:
+            continue
+        n_closed = sb_patch_where(
+            "jobs",
+            {"company_id": id_filter, "status": "in.(new,active)"},
+            {"status": "closed"},
+        )
+        if n_closed < 0:
+            log_write_failure("PATCH", "jobs", f"dna-off close company_id={id_filter}")
+            continue
+        total += n_closed
+    log.info(f"[companies] DNA-off close: closed {total} open job(s)")
+    return total
+
+
 def discover_careers(table_key: str, og_only: bool = False):
     """Find careers pages for companies that don't have one yet."""
     cfg = TABLE_CONFIG[table_key]
@@ -1132,8 +1361,9 @@ def discover_careers(table_key: str, og_only: bool = False):
     # discovery on them (and never learn a careers_url for a company we've excluded).
     if tbl == "companies":
         params["dna_fit"] = "eq.true"
-
-    rows = sb_get(tbl, params)
+        rows = _load_company_candidates(params)
+    else:
+        rows = sb_get(tbl, params)
     log.info(f"[{tbl}] Discovering careers pages for {len(rows)} companies{'  (OG only)' if og_only else ''}...")
 
     found = 0
@@ -1184,8 +1414,27 @@ def scrape_jobs(table_key: str, company_id: Optional[int] = None, og_only: bool 
     jobs_table = cfg["jobs_table"]
     source = cfg["source"]
 
+    # --scrape and --all both land here. While a company is still dna_fit=true the
+    # per-company stale-close below retires listings that left the board; once
+    # dna_fit flips off, that company drops out of the candidate query and those
+    # open jobs would stay new/active forever. Sweep them first. --company is a
+    # forced single-id scrape and does not run the sweep.
+    if tbl == "companies" and company_id is None:
+        close_open_jobs_for_dna_off_companies()
+
     if company_id:
         rows = sb_get(tbl, {"id": f"eq.{company_id}"})
+        # A forced id bypasses the scrape pause so an operator can refresh one
+        # company without waiting out the 14-day snooze.
+        if (
+            tbl == "companies"
+            and rows
+            and _scrape_pause_active(rows[0], _scrape_pause_deadline())
+        ):
+            log.info(
+                f"[companies] --company {company_id} is scrape-paused; "
+                "bypass because a single company was forced"
+            )
     else:
         params = {
             "careers_url": "neq.none",
@@ -1200,7 +1449,9 @@ def scrape_jobs(table_key: str, company_id: Optional[int] = None, og_only: bool 
         # keeps spam sources (deals/aggregator sites like Slickdeals) out once flagged.
         if tbl == "companies":
             params["dna_fit"] = "eq.true"
-        rows = sb_get(tbl, params)
+            rows = _load_company_candidates(params)
+        else:
+            rows = sb_get(tbl, params)
 
     log.info(f"[{tbl}] Scraping jobs for {len(rows)} companies...")
     now = datetime.now(UTC).isoformat()
@@ -1403,7 +1654,9 @@ def main():
                         help="Which table to run against (default: both)")
     parser.add_argument("--og-only", action="store_true",
                         help="Only process companies with OG members (companies table only)")
-    parser.add_argument("--company", type=int, help="Scrape a single company by ID (companies table)")
+    parser.add_argument("--company", type=int,
+                        help="Scrape a single company by ID (companies table). "
+                             "Bypasses scrape_paused_until.")
     parser.add_argument("--chain-enrich", action="store_true",
                         help="Only fire the Make enrichment chain (company then contact); no scraping")
     args = parser.parse_args()
