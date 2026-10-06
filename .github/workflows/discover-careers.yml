@@ -49,3 +49,39 @@ jobs:
             ARGS="$ARGS --og-only"
           fi
           python job_scraper.py $ARGS
+
+      # Same pattern as GT Job Scraper: this step covers a failed discover step.
+      # Job-level timeout skips it; report-failure (below) still runs.
+      - name: Report discover failure or cancellation
+        if: failure() || cancelled()
+        run: |
+          echo "::error title=Discover Careers Pages failed or cancelled::The discover step failed or was cancelled. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          exit 1
+
+  report-failure:
+    needs: discover
+    if: ${{ always() && (needs.discover.result == 'failure' || needs.discover.result == 'cancelled') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report discover failure or cancellation
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          JOB_RESULT: ${{ needs.discover.result }}
+        run: |
+          MSG="Discover Careers Pages ${JOB_RESULT}. Discovery did not finish (a hung company used to sit on a blank Playwright frame until the Actions timeout). Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          echo "::error title=Discover Careers Pages ${JOB_RESULT}::${MSG}"
+          {
+            echo "## Discover Careers Pages ${JOB_RESULT}"
+            echo ""
+            echo "$MSG"
+            echo ""
+            echo "This annotation fires when the discover job fails or is cancelled, including the Actions job timeout."
+            echo "To also post to Slack, add a repository secret named \`SLACK_WEBHOOK_URL\` (incoming webhook). This job POSTs to it when that secret is set."
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
+            payload=$(python3 -c 'import json,sys; print(json.dumps({"text": sys.argv[1]}))' "$MSG")
+            curl -fsS -X POST -H 'Content-type: application/json' --data "$payload" "$SLACK_WEBHOOK_URL" \
+              || echo "::warning::Slack webhook post failed"
+          fi
+          exit 1

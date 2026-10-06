@@ -819,6 +819,13 @@ def find_careers_url(company_domain: str) -> Optional[str]:
 # JOB SCRAPERS — ATS-SPECIFIC
 # ─────────────────────────────────────────────────────────────────────
 
+def _job_field(value) -> str:
+    """Missing and JSON null both become blank. get(key, "") does not, when the value is null."""
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
 def scrape_greenhouse(slug: str) -> list[dict]:
     """Use Greenhouse public API."""
     url = f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true"
@@ -829,19 +836,31 @@ def scrape_greenhouse(slug: str) -> list[dict]:
         data = resp.json()
         jobs = []
         for j in data.get("jobs", []):
-            title = j.get("title", "")
+            title = _job_field(j.get("title"))
 
-            # Location: prefer offices list, fall back to location field
-            location = ", ".join(
-                loc.get("name", "") for loc in j.get("offices", []) if loc.get("name")
-            ) or j.get("location", {}).get("name", "")
+            # Location: prefer offices list, fall back to location field.
+            # Greenhouse sends location: null and office name: null.
+            names = []
+            for loc in j.get("offices") or []:
+                if isinstance(loc, dict):
+                    office = _job_field(loc.get("name"))
+                    if office:
+                        names.append(office)
+            raw_loc = j.get("location")
+            if isinstance(raw_loc, dict):
+                fallback = _job_field(raw_loc.get("name"))
+            else:
+                fallback = _job_field(raw_loc)
+            location = ", ".join(names) or fallback
 
-            job_url = j.get("absolute_url", "")
+            job_url = _job_field(j.get("absolute_url"))
 
             # Salary from metadata fields
             salary_text = ""
-            for meta in j.get("metadata", []):
-                name_lower = meta.get("name", "").lower()
+            for meta in j.get("metadata") or []:
+                if not isinstance(meta, dict):
+                    continue
+                name_lower = _job_field(meta.get("name")).lower()
                 if "salary" in name_lower or "comp" in name_lower or "pay" in name_lower:
                     salary_text = str(meta.get("value") or "")
 
@@ -877,14 +896,24 @@ def scrape_lever(slug: str) -> list[dict]:
         data = resp.json()
         jobs = []
         for j in data:
-            title = j.get("text", "")
-            cats = j.get("categories", {})
-            location = cats.get("location", "") or cats.get("allLocations", [""])[0]
-            job_url = j.get("hostedUrl", "")
+            title = _job_field(j.get("text"))
+            cats = j.get("categories") or {}
+            if not isinstance(cats, dict):
+                cats = {}
+            all_locs = cats.get("allLocations") or []
+            location = _job_field(cats.get("location"))
+            if not location:
+                for loc in all_locs:
+                    location = _job_field(loc)
+                    if location:
+                        break
+            job_url = _job_field(j.get("hostedUrl"))
 
             salary_text = ""
-            for lst in j.get("lists", []):
-                lst_text = lst.get("text", "").lower()
+            for lst in j.get("lists") or []:
+                if not isinstance(lst, dict):
+                    continue
+                lst_text = _job_field(lst.get("text")).lower()
                 if "salary" in lst_text or "compensation" in lst_text or "pay" in lst_text:
                     salary_text = parse_html(lst.get("content", "")).get_text(" ")
 
@@ -944,18 +973,17 @@ def scrape_ashby(slug: str) -> list[dict]:
         ) or []
         jobs = []
         for p in postings:
-            location = p.get("locationName", "")
+            location = _job_field(p.get("locationName"))
             if p.get("isRemote"):
                 location = "Remote" + (f", {location}" if location else "")
-            job_url = (
-                p.get("externalLink")
-                or f"https://jobs.ashbyhq.com/{slug}/{p.get('id', '')}"
+            job_url = _job_field(p.get("externalLink")) or (
+                f"https://jobs.ashbyhq.com/{slug}/{_job_field(p.get('id'))}"
             )
             jobs.append({
-                "title": p.get("title", ""),
+                "title": _job_field(p.get("title")),
                 "location": location,
                 "url": job_url,
-                "salary_text": p.get("compensationTierSummary") or "",
+                "salary_text": _job_field(p.get("compensationTierSummary")),
             })
         return jobs
     except Exception as e:
@@ -1832,98 +1860,115 @@ def scan_all_jobs() -> list[dict]:
     log.info(f"Scanning jobs for {len(rows)} companies...")
     now = datetime.now(UTC).isoformat()
     matching = []
+    skipped_jobs = 0
 
     for co in rows:
         stage = co.get("stage") or ""
         if stage and not stage_qualifies(stage):
             continue
 
-        jobs = get_jobs_for_company(co)
+        company = co.get("company") or "unknown"
+        try:
+            jobs = get_jobs_for_company(co)
+        except Exception as e:
+            log.warning(f"  {company}: scrape failed ({type(e).__name__}: {e}) — skipping company")
+            continue
         vc_names = co.get("vc_names") or []
 
         for job in jobs:
-            title = job.get("title", "").strip()
-            location = job.get("location", "").strip()
-            salary_text = job.get("salary_text", "").strip()
-            job_url = job.get("url", "").strip()
+            try:
+                if not isinstance(job, dict):
+                    raise TypeError(f"job record is {type(job).__name__}")
+                title = _job_field(job.get("title"))
+                location = _job_field(job.get("location"))
+                salary_text = _job_field(job.get("salary_text"))
+                job_url = _job_field(job.get("url"))
 
-            if not title_matches(title):
-                continue
-            if not is_us_location(location):
-                continue
-            if not salary_qualifies(salary_text):
-                continue
+                if not title_matches(title):
+                    continue
+                if not is_us_location(location):
+                    continue
+                if not salary_qualifies(salary_text):
+                    continue
 
-            salary_min = None
-            if salary_text:
-                vals = re.findall(r"\$?([\d,]+)[kK]?", salary_text.replace(",", ""))
-                nums = []
-                for v in vals:
-                    n = int(v)
-                    if "k" in salary_text.lower() and n < 10_000:
-                        n *= 1_000
-                    if n >= 10_000:
-                        nums.append(n)
-                salary_min = min(nums) if nums else None
+                salary_min = None
+                if salary_text:
+                    vals = re.findall(r"\$?([\d,]+)[kK]?", salary_text.replace(",", ""))
+                    nums = []
+                    for v in vals:
+                        n = int(v)
+                        if "k" in salary_text.lower() and n < 10_000:
+                            n *= 1_000
+                        if n >= 10_000:
+                            nums.append(n)
+                    salary_min = min(nums) if nums else None
 
-            matching.append({
-                "title": title,
-                "company": co["company"],
-                "stage": stage or "Unknown",
-                "vcs_invested": " | ".join(vc_names),
-                "location": location or "Not specified",
-                "salary": salary_text or "Not listed",
-                "url": job_url,
-                "first_seen": now,
-            })
+                matching.append({
+                    "title": title,
+                    "company": company,
+                    "stage": stage or "Unknown",
+                    "vcs_invested": " | ".join(vc_names),
+                    "location": location or "Not specified",
+                    "salary": salary_text or "Not listed",
+                    "url": job_url,
+                    "first_seen": now,
+                })
 
-            # Check if job already exists in vc_jobs
-            existing = sb.get_by_url(job_url, "vc_jobs")
-            if existing:
-                sb.update(
-                    "vc_jobs",
-                    {"url": job_url},
-                    {"last_seen": now, "active": True}
-                )
-            else:
-                sb.insert(
-                    "vc_jobs",
-                    {
-                        "company_id": co["id"],
-                        "title": title,
-                        "url": job_url,
-                        "location": location,
-                        "salary_text": salary_text,
-                        "salary_min": salary_min,
-                        "vc_names": vc_names,
-                        "source": "vc_monitor",
-                        "first_seen": now,
-                        "last_seen": now,
-                        "active": True,
-                    }
-                )
+                # Check if job already exists in vc_jobs
+                existing = sb.get_by_url(job_url, "vc_jobs")
+                if existing:
+                    sb.update(
+                        "vc_jobs",
+                        {"url": job_url},
+                        {"last_seen": now, "active": True}
+                    )
+                else:
+                    sb.insert(
+                        "vc_jobs",
+                        {
+                            "company_id": co["id"],
+                            "title": title,
+                            "url": job_url,
+                            "location": location,
+                            "salary_text": salary_text,
+                            "salary_min": salary_min,
+                            "vc_names": vc_names,
+                            "source": "vc_monitor",
+                            "first_seen": now,
+                            "last_seen": now,
+                            "active": True,
+                        }
+                    )
 
-            # Cross-post to the main jobs table so it appears in the dashboard
-            existing_main = sb.get_by_url(job_url, "jobs")
-            if existing_main:
-                sb.update("jobs", {"url": job_url}, {"last_seen": now, "dna_fit": True})
-            else:
-                sb.insert(
-                    "jobs",
-                    {
-                        "company_name": co["company"],
-                        "title": title,
-                        "url": job_url,
-                        "dna_fit": True,
-                        "first_seen": now,
-                        "last_seen": now,
-                        "status": "new",
-                    }
+                # Cross-post to the main jobs table so it appears in the dashboard
+                existing_main = sb.get_by_url(job_url, "jobs")
+                if existing_main:
+                    sb.update("jobs", {"url": job_url}, {"last_seen": now, "dna_fit": True})
+                else:
+                    sb.insert(
+                        "jobs",
+                        {
+                            "company_name": company,
+                            "title": title,
+                            "url": job_url,
+                            "dna_fit": True,
+                            "first_seen": now,
+                            "last_seen": now,
+                            "status": "new",
+                        }
+                    )
+            except Exception as e:
+                skipped_jobs += 1
+                ident = job if isinstance(job, dict) else {}
+                log.warning(
+                    f"  {company}: skipped job title={_job_field(ident.get('title'))!r} "
+                    f"url={_job_field(ident.get('url'))!r} ({type(e).__name__}: {e})",
+                    exc_info=True,
                 )
 
         time.sleep(0.5)
 
-    log.info(f"Found {len(matching)} matching jobs")
+    log.info(f"Found {len(matching)} matching jobs. {skipped_jobs} job(s) skipped after an error.")
     return matching
 
 

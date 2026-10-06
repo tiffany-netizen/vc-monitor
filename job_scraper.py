@@ -28,6 +28,8 @@ import json
 import logging
 import os
 import re
+import signal
+import threading
 import time
 from datetime import UTC, datetime
 from typing import Optional
@@ -220,7 +222,7 @@ MIN_SALARY = 200_000
 
 
 def title_matches(title: str) -> bool:
-    t = title.lower().strip()
+    t = (title or "").lower().strip()
     if len(t) > 100:
         return False
     junk = [
@@ -304,16 +306,16 @@ DISQUALIFYING_TITLE_PATTERNS = [
 
 def title_disqualified(title: str) -> bool:
     """True when a title that passed title_matches() is still not a real target role."""
-    t = title.lower().strip()
+    t = (title or "").lower().strip()
     return any(re.search(p, t) for p in DISQUALIFYING_TITLE_PATTERNS)
 
 
 def location_status(location: str) -> str:
     """"us", "non_us", or "unknown". Blank is unknown, NOT us — a posting whose location
     failed to parse must not be silently treated as American."""
-    if not location or not location.strip():
+    if not location or not str(location).strip():
         return "unknown"
-    loc = location.lower()
+    loc = str(location).lower()
     non_us = [
         "london", " uk", "united kingdom", "england", "canada", "toronto",
         "vancouver", "india", "bangalore", "bengaluru", "mumbai", "hyderabad",
@@ -334,9 +336,9 @@ def is_us_location(location: str) -> bool:
 
 
 def salary_qualifies(salary_text: str) -> bool:
-    if not salary_text or not salary_text.strip():
+    if not salary_text or not str(salary_text).strip():
         return True
-    text = salary_text.replace(",", "").lower()
+    text = str(salary_text).replace(",", "").lower()
     matches = re.findall(r"\$?(\d+(?:\.\d+)?)([km]?)", text)
     values = []
     for num_str, suffix in matches:
@@ -557,6 +559,42 @@ def find_careers_url(company_domain: str) -> Optional[str]:
 # ATS SCRAPERS
 # ----------------------------------------------------------------
 
+def _job_field(value) -> str:
+    """Coerce a job field to text. A missing key and JSON null are both blank.
+
+    dict.get(key, "") still returns None when the key is present and null, and
+    .strip() on that None crashed the Built Greenhouse board (run 37524335070).
+    """
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _job_record(title, location, url, salary_text="") -> dict:
+    return {
+        "title": _job_field(title),
+        "location": _job_field(location),
+        "url": _job_field(url),
+        "salary_text": _job_field(salary_text),
+    }
+
+
+def _greenhouse_location(job: dict) -> str:
+    names = []
+    for loc in job.get("offices") or []:
+        if not isinstance(loc, dict):
+            continue
+        name = _job_field(loc.get("name"))
+        if name:
+            names.append(name)
+    if names:
+        return ", ".join(names)
+    raw = job.get("location")
+    if isinstance(raw, dict):
+        return _job_field(raw.get("name"))
+    return _job_field(raw)
+
+
 def scrape_greenhouse(slug: str) -> list[dict]:
     url = f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true"
     resp = safe_get(url)
@@ -575,27 +613,27 @@ def scrape_greenhouse(slug: str) -> list[dict]:
     # and the old board-level except discarded EVERY job on that board.
     for j in data.get("jobs") or []:
         try:
-            title = j.get("title", "")
-            location = ", ".join(
-                loc.get("name", "") for loc in (j.get("offices") or []) if loc.get("name")
-            ) or (j.get("location") or {}).get("name", "")
-            job_url = j.get("absolute_url", "")
+            title = _job_field(j.get("title"))
+            location = _greenhouse_location(j)
+            job_url = _job_field(j.get("absolute_url"))
 
             salary_text = ""
             for meta in j.get("metadata") or []:
-                name = (meta.get("name") or "").lower()
+                if not isinstance(meta, dict):
+                    continue
+                name = _job_field(meta.get("name")).lower()
                 if "salary" in name or "comp" in name:
-                    salary_text = str(meta.get("value") or "")
+                    salary_text = _job_field(meta.get("value"))
             if not salary_text:
-                content = j.get("content", "") or ""
+                content = _job_field(j.get("content"))
                 m = re.search(r"\$[\d,]+\s*[-\u2013]\s*\$[\d,]+", content)
                 if m:
                     salary_text = m.group(0)
 
-            jobs.append({"title": title, "location": location, "url": job_url, "salary_text": salary_text})
+            jobs.append(_job_record(title, location, job_url, salary_text))
         except Exception as e:
             bad += 1
-            log.debug(f"Greenhouse posting skipped ({slug}): {e}")
+            log.warning(f"Greenhouse posting skipped ({slug}): {e}")
     if bad:
         log.warning(f"Greenhouse {slug}: skipped {bad} malformed posting(s), kept {len(jobs)}")
     return jobs
@@ -616,26 +654,35 @@ def scrape_lever(slug: str) -> list[dict]:
     bad = 0
     for j in data or []:
         try:
-            title = j.get("text", "")
+            title = _job_field(j.get("text"))
             cats = j.get("categories") or {}
+            if not isinstance(cats, dict):
+                cats = {}
             all_locs = cats.get("allLocations") or []
-            location = cats.get("location") or (all_locs[0] if all_locs else "")
-            job_url = j.get("hostedUrl", "")
+            location = _job_field(cats.get("location"))
+            if not location:
+                for loc in all_locs:
+                    location = _job_field(loc)
+                    if location:
+                        break
+            job_url = _job_field(j.get("hostedUrl"))
 
             salary_text = ""
             for lst in j.get("lists") or []:
-                if any(kw in (lst.get("text") or "").lower() for kw in ["salary", "compensation", "pay"]):
+                if not isinstance(lst, dict):
+                    continue
+                if any(kw in _job_field(lst.get("text")).lower() for kw in ["salary", "compensation", "pay"]):
                     salary_text = BeautifulSoup(lst.get("content") or "", "lxml").get_text(" ")
             if not salary_text:
-                plain = j.get("descriptionPlain", "") or ""
+                plain = _job_field(j.get("descriptionPlain"))
                 m = re.search(r"\$[\d,]+\s*[-\u2013]\s*\$[\d,]+", plain)
                 if m:
                     salary_text = m.group(0)
 
-            jobs.append({"title": title, "location": location, "url": job_url, "salary_text": salary_text})
+            jobs.append(_job_record(title, location, job_url, salary_text))
         except Exception as e:
             bad += 1
-            log.debug(f"Lever posting skipped ({slug}): {e}")
+            log.warning(f"Lever posting skipped ({slug}): {e}")
     if bad:
         log.warning(f"Lever {slug}: skipped {bad} malformed posting(s), kept {len(jobs)}")
     return jobs
@@ -664,18 +711,26 @@ def scrape_ashby(slug: str) -> list[dict]:
         board = (body.get("data") or {}).get("jobBoard") or {}
         postings = board.get("jobPostings") or []
         jobs = []
+        bad = 0
         for p in postings:
-            location = p.get("locationName", "")
-            job_url = f"https://jobs.ashbyhq.com/{slug}/{p.get('id', '')}"
-            jobs.append({
-                "title": p.get("title", ""),
-                "location": location,
-                "url": job_url,
-                "salary_text": p.get("compensationTierSummary") or "",
-            })
+            try:
+                if not isinstance(p, dict):
+                    raise TypeError(f"posting is {type(p).__name__}")
+                posting_id = _job_field(p.get("id"))
+                jobs.append(_job_record(
+                    p.get("title"),
+                    p.get("locationName"),
+                    f"https://jobs.ashbyhq.com/{slug}/{posting_id}",
+                    p.get("compensationTierSummary"),
+                ))
+            except Exception as e:
+                bad += 1
+                log.warning(f"Ashby posting skipped ({slug}): {e}")
+        if bad:
+            log.warning(f"Ashby {slug}: skipped {bad} malformed posting(s), kept {len(jobs)}")
         return jobs
     except Exception as e:
-        log.debug(f"Ashby parse error ({slug}): {e}")
+        log.warning(f"Ashby parse error ({slug}): {e}")
         return []
 
 
@@ -696,26 +751,31 @@ def scrape_smartrecruiters(slug: str) -> list[dict]:
             for p in postings:
                 try:
                     loc = p.get("location") or {}
-                    city = loc.get("city", "")
-                    region = loc.get("region", "")
-                    country = loc.get("country", "")
+                    if not isinstance(loc, dict):
+                        loc = {}
+                    city = _job_field(loc.get("city"))
+                    region = _job_field(loc.get("region"))
+                    country = _job_field(loc.get("country"))
                     location = ", ".join(part for part in [city, region, country] if part)
                     comp = p.get("compensation") or {}
+                    if not isinstance(comp, dict):
+                        comp = {}
                     salary_text = ""
                     if comp:
-                        sal_min = comp.get("min", "")
-                        sal_max = comp.get("max", "")
-                        currency = comp.get("currency", "")
+                        sal_min = _job_field(comp.get("min"))
+                        sal_max = _job_field(comp.get("max"))
+                        currency = _job_field(comp.get("currency"))
                         if sal_min or sal_max:
                             salary_text = f"{currency} {sal_min}-{sal_max}".strip()
-                    jobs.append({
-                        "title": p.get("name", ""),
-                        "location": location,
-                        "url": p.get("ref", "") or f"https://careers.smartrecruiters.com/{slug}/{p.get('id', '')}",
-                        "salary_text": salary_text,
-                    })
+                    posting_id = _job_field(p.get("id"))
+                    jobs.append(_job_record(
+                        p.get("name"),
+                        location,
+                        _job_field(p.get("ref")) or f"https://careers.smartrecruiters.com/{slug}/{posting_id}",
+                        salary_text,
+                    ))
                 except Exception as e:
-                    log.debug(f"SmartRecruiters posting skipped ({slug}): {e}")
+                    log.warning(f"SmartRecruiters posting skipped ({slug}): {e}")
             if len(postings) < 100:
                 break
             offset += 100
@@ -743,6 +803,18 @@ def scrape_workday(slug: str, careers_url: str = "") -> list[dict]:
                 slug = m2.group(1)
                 wd_num = m2.group(2)
 
+    def _one(posting) -> dict:
+        bullets = posting.get("bulletFields") or []
+        loc = _job_field(posting.get("locationsText"))
+        if not loc and bullets:
+            loc = _job_field(bullets[0])
+        ext_path = _job_field(posting.get("externalPath"))
+        job_url = (
+            f"https://{slug}.wd{wd_num}.myworkdayjobs.com/en-US/{site}{ext_path}"
+            if ext_path else ""
+        )
+        return _job_record(posting.get("title"), loc, job_url, "")
+
     api_url = f"https://{slug}.wd{wd_num}.myworkdayjobs.com/wday/cxs/{slug}/{site}/jobs"
     payload = {"appliedFacets": {}, "limit": 20, "offset": 0, "searchText": ""}
     jobs = []
@@ -754,12 +826,8 @@ def scrape_workday(slug: str, careers_url: str = "") -> list[dict]:
         data = resp.json()
         total = data.get("total", 0)
         for posting in data.get("jobPostings") or []:
-            title = posting.get("title", "")
-            bullets = posting.get("bulletFields") or [""]
-            loc = posting.get("locationsText", "") or bullets[0]
-            ext_path = posting.get("externalPath", "")
-            job_url = f"https://{slug}.wd{wd_num}.myworkdayjobs.com/en-US/{site}{ext_path}" if ext_path else ""
-            jobs.append({"title": title, "location": loc, "url": job_url, "salary_text": ""})
+            if isinstance(posting, dict):
+                jobs.append(_one(posting))
 
         # Paginate if there are more
         offset = 20
@@ -769,12 +837,8 @@ def scrape_workday(slug: str, careers_url: str = "") -> list[dict]:
             if resp.status_code != 200:
                 break
             for posting in resp.json().get("jobPostings") or []:
-                title = posting.get("title", "")
-                bullets = posting.get("bulletFields") or [""]
-                loc = posting.get("locationsText", "") or bullets[0]
-                ext_path = posting.get("externalPath", "")
-                job_url = f"https://{slug}.wd{wd_num}.myworkdayjobs.com/en-US/{site}{ext_path}" if ext_path else ""
-                jobs.append({"title": title, "location": loc, "url": job_url, "salary_text": ""})
+                if isinstance(posting, dict):
+                    jobs.append(_one(posting))
             offset += 20
     except Exception as e:
         log.debug(f"Workday parse error ({slug}): {e}")
@@ -791,13 +855,15 @@ def scrape_rippling(slug: str) -> list[dict]:
         data = resp.json()
         jobs = []
         for j in data if isinstance(data, list) else data.get("jobs", []):
-            location = j.get("location", "") or j.get("workLocation", "")
-            jobs.append({
-                "title": j.get("title", "") or j.get("name", ""),
-                "location": location,
-                "url": j.get("url", "") or f"https://app.rippling.com/jobs/{slug}/{j.get('id', '')}",
-                "salary_text": j.get("salary", "") or "",
-            })
+            if not isinstance(j, dict):
+                continue
+            posting_id = _job_field(j.get("id"))
+            jobs.append(_job_record(
+                _job_field(j.get("title")) or _job_field(j.get("name")),
+                _job_field(j.get("location")) or _job_field(j.get("workLocation")),
+                _job_field(j.get("url")) or f"https://app.rippling.com/jobs/{slug}/{posting_id}",
+                j.get("salary"),
+            ))
         return jobs
     except Exception as e:
         log.debug(f"Rippling parse error ({slug}): {e}")
@@ -815,12 +881,15 @@ def scrape_dover(slug: str) -> list[dict]:
         jobs_list = data if isinstance(data, list) else data.get("jobs", [])
         jobs = []
         for j in jobs_list:
-            jobs.append({
-                "title": j.get("title", "") or j.get("name", ""),
-                "location": j.get("location", ""),
-                "url": j.get("url", "") or f"https://app.dover.com/apply/{slug}/{j.get('id', '')}",
-                "salary_text": j.get("salary_range", "") or "",
-            })
+            if not isinstance(j, dict):
+                continue
+            posting_id = _job_field(j.get("id"))
+            jobs.append(_job_record(
+                _job_field(j.get("title")) or _job_field(j.get("name")),
+                j.get("location"),
+                _job_field(j.get("url")) or f"https://app.dover.com/apply/{slug}/{posting_id}",
+                j.get("salary_range"),
+            ))
         return jobs
     except Exception as e:
         log.debug(f"Dover parse error ({slug}): {e}")
@@ -841,17 +910,21 @@ def scrape_bamboohr(slug: str) -> list[dict]:
         data = resp.json()
         jobs = []
         for j in data.get("result") or []:
+            if not isinstance(j, dict):
+                continue
             loc = j.get("location") or {}
-            parts = [loc.get("city") or "", loc.get("state") or ""]
+            if not isinstance(loc, dict):
+                loc = {}
+            parts = [_job_field(loc.get("city")), _job_field(loc.get("state"))]
             location = ", ".join(p for p in parts if p)
             if j.get("isRemote") and not location:
                 location = "Remote"
-            jobs.append({
-                "title": j.get("jobOpeningName", ""),
-                "location": location,
-                "url": f"https://{slug}.bamboohr.com/careers/{j.get('id', '')}",
-                "salary_text": "",
-            })
+            jobs.append(_job_record(
+                j.get("jobOpeningName"),
+                location,
+                f"https://{slug}.bamboohr.com/careers/{_job_field(j.get('id'))}",
+                "",
+            ))
         return jobs
     except Exception as e:
         log.debug(f"BambooHR parse error ({slug}): {e}")
@@ -936,29 +1009,201 @@ def _extract_jobs_from_soup(soup: BeautifulSoup, careers_url: str) -> list[dict]
     return jobs
 
 
+# One company must not be able to stall discover or scrape until the Actions
+# job timeout. 90s covers the static probes plus the Playwright fallback.
+# find_careers_url / get_jobs_for_company run on a daemon thread; on expiry the
+# parent stops waiting and SIGKILLs Playwright/Chromium descendants so a stuck
+# frame.content() cannot pin the run.
+COMPANY_TIME_CAP_SECONDS = 90
+_CAP_GRACE_SECONDS = 1
+_BROWSER_PROC_MARKERS = ("playwright", "chrom", "headless_shell")
+
+
+class CompanyTimeCapExceeded(Exception):
+    """Raised when one company's discover or scrape lookup exceeds the cap."""
+
+
+def _descendant_pids(root: int) -> list[int]:
+    children: dict[int, list[int]] = {}
+    try:
+        entries = os.listdir("/proc")
+    except OSError:
+        return []
+    for entry in entries:
+        if not entry.isdigit():
+            continue
+        pid = int(entry)
+        try:
+            with open(f"/proc/{pid}/stat", encoding="utf-8", errors="replace") as fh:
+                stat = fh.read()
+        except OSError:
+            continue
+        rparen = stat.rfind(")")
+        if rparen < 0:
+            continue
+        parts = stat[rparen + 2:].split()
+        if len(parts) < 2:
+            continue
+        try:
+            ppid = int(parts[1])
+        except ValueError:
+            continue
+        children.setdefault(ppid, []).append(pid)
+    ordered: list[int] = []
+    stack = list(children.get(root, []))
+    while stack:
+        pid = stack.pop()
+        ordered.append(pid)
+        stack.extend(children.get(pid, []))
+    return ordered
+
+
+def _proc_cmdline(pid: int) -> str:
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as fh:
+            raw = fh.read()
+    except OSError:
+        return ""
+    return raw.replace(b"\x00", b" ").decode("utf-8", "replace").lower()
+
+
+def _kill_browser_descendants() -> None:
+    """SIGKILL this process's Playwright driver and Chromium children.
+
+    frame.content() blocks in the driver with no timeout of its own. Killing
+    those descendants is what lets the capped call actually end. The scraper
+    process and unrelated children are left alone.
+    """
+    if not os.path.isdir("/proc"):
+        return
+    for pid in _descendant_pids(os.getpid()):
+        cmd = _proc_cmdline(pid)
+        if not cmd or not any(marker in cmd for marker in _BROWSER_PROC_MARKERS):
+            continue
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+
+
+def run_with_company_cap(fn, *args, timeout: float | None = None):
+    """Run fn(*args) and give up after `timeout` seconds (default: the per-company cap).
+
+    The callable runs on a daemon thread so a hung Playwright call cannot freeze
+    the pipeline. Monkeypatches in this process still apply. A late return after
+    the cap is ignored — the company already used its budget.
+    """
+    if timeout is None:
+        timeout = COMPANY_TIME_CAP_SECONDS
+    box: dict = {}
+
+    def _target():
+        try:
+            box["value"] = fn(*args)
+        except Exception as exc:
+            box["error"] = exc
+
+    thread = threading.Thread(
+        target=_target,
+        name=f"company-cap-{getattr(fn, '__name__', 'step')}",
+        daemon=True,
+    )
+    thread.start()
+    thread.join(timeout)
+    if thread.is_alive():
+        _kill_browser_descendants()
+        thread.join(_CAP_GRACE_SECONDS)
+        raise CompanyTimeCapExceeded(f"exceeded the {timeout:g}s per-company cap")
+    if "error" in box:
+        raise box["error"]
+    if "value" not in box:
+        raise RuntimeError(f"{getattr(fn, '__name__', 'company step')} finished without a result")
+    return box["value"]
+
+
+def _frame_url(frame) -> str:
+    try:
+        return (frame.url or "").strip()
+    except Exception:
+        return ""
+
+
+def _skip_unreadable_frame(frame, main_frame) -> bool:
+    """Skip child frames whose document will never commit.
+
+    Playwright's frame.content() waits until the frame has a document and does
+    not apply a timeout. A blank or hidden child — on justswish.in, a YouTube
+    iframe that stays at about:blank — blocks the whole discovery run. The main
+    frame is always read. Embedded job boards (a real https URL, still visible)
+    are kept; visibility failures fail open so a flaky is_visible() cannot drop
+    a board that lives in an iframe.
+    """
+    try:
+        if frame.is_detached():
+            return True
+    except Exception:
+        return True
+    if frame == main_frame or getattr(frame, "parent_frame", None) is None:
+        return False
+    url = _frame_url(frame)
+    if not url or url.startswith("about:"):
+        return True
+    try:
+        handle = frame.frame_element()
+        if handle is None or not handle.is_visible():
+            return True
+    except Exception:
+        return False
+    return False
+
+
+def _html_from_frames(frames, main_frame) -> list[str]:
+    """HTML of the main frame and readable child frames. Blank/hidden frames are skipped."""
+    htmls = []
+    skipped = []
+    for frame in frames:
+        if _skip_unreadable_frame(frame, main_frame):
+            skipped.append(_frame_url(frame) or "(no url)")
+            continue
+        try:
+            htmls.append(frame.content())
+        except Exception:
+            continue
+    if skipped:
+        log.info(f"  skipped {len(skipped)} blank/hidden frame(s): {skipped[:5]}")
+    return htmls
+
+
 def _render_careers_page(careers_url: str) -> list[str]:
     """Render a JS-heavy careers page headless. Returns HTML of the page and
-    every iframe (embedded boards live in iframes, not the main document)."""
+    every readable iframe (embedded boards live in iframes, not the main document).
+
+    Blank, detached, and hidden child frames are not read — see _skip_unreadable_frame.
+    """
     from playwright.sync_api import sync_playwright
-    htmls = []
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
-        # skip heavy assets so renders stay fast
-        page.route("**/*", lambda route: route.abort()
-                   if route.request.resource_type in ("image", "media", "font")
-                   else route.continue_())
-        # networkidle flakes on pages with analytics beacons; a fixed settle
-        # wait after DOM load is what reliably surfaces client-rendered boards
-        page.goto(careers_url, wait_until="domcontentloaded", timeout=30000)
-        page.wait_for_timeout(4000)
-        for frame in page.frames:
+        try:
+            page = browser.new_page()
+            # Bound ordinary Playwright ops. frame.content() on a frame that never
+            # commits still ignores this (that case is filtered above); the
+            # per-company cap is the backstop if a readable frame hangs anyway.
+            page.set_default_timeout(20_000)
+            page.set_default_navigation_timeout(30_000)
+            # skip heavy assets so renders stay fast
+            page.route("**/*", lambda route: route.abort()
+                       if route.request.resource_type in ("image", "media", "font")
+                       else route.continue_())
+            # networkidle flakes on pages with analytics beacons; a fixed settle
+            # wait after DOM load is what reliably surfaces client-rendered boards
+            page.goto(careers_url, wait_until="domcontentloaded", timeout=30000)
+            page.wait_for_timeout(4000)
+            return _html_from_frames(page.frames, page.main_frame)
+        finally:
             try:
-                htmls.append(frame.content())
+                browser.close()
             except Exception:
-                continue
-        browser.close()
-    return htmls
+                pass
 
 
 def scrape_generic(careers_url: str) -> list[dict]:
@@ -1111,6 +1356,33 @@ def extract_domain(website: str) -> Optional[str]:
         return None
 
 
+def _mark_careers_none(tbl: str, company_id, name: str) -> None:
+    """Record a finished discovery miss so the company leaves the queue.
+
+    `careers_url='none'` is the sentinel discover already writes when no page is
+    found (`careers_url IS NULL` is the queue). ats fields are cleared so a
+    failed or timed-out attempt cannot leave a partial board behind.
+    """
+    if not sb_patch(tbl, {"id": company_id}, {
+        "careers_url": "none",
+        "ats_type": None,
+        "ats_slug": None,
+    }):
+        log_write_failure("PATCH", tbl, f"company={name} id={company_id} careers_url=none")
+
+
+def _discover_company_careers(domain: str):
+    """Return (careers_url, ats_type, ats_slug). No database writes."""
+    careers_url = find_careers_url(domain)
+    ats_type = ats_slug = None
+    if careers_url:
+        resp = safe_get(careers_url, timeout=10)
+        if resp:
+            ats_type, ats_slug, direct = detect_ats(resp.text, careers_url)
+            careers_url = direct or careers_url
+    return careers_url, ats_type, ats_slug
+
+
 def discover_careers(table_key: str, og_only: bool = False):
     """Find careers pages for companies that don't have one yet."""
     cfg = TABLE_CONFIG[table_key]
@@ -1144,19 +1416,23 @@ def discover_careers(table_key: str, og_only: bool = False):
         if not domain:
             continue
 
-        careers_url = find_careers_url(domain)
-        if not careers_url:
-            log.debug(f"  No careers page: {name} ({domain})")
-            if not sb_patch(tbl, {"id": company_id}, {"careers_url": "none"}):
-                log_write_failure("PATCH", tbl, f"company={name} id={company_id} careers_url=none")
+        try:
+            careers_url, ats_type, ats_slug = run_with_company_cap(
+                _discover_company_careers, domain
+            )
+        except CompanyTimeCapExceeded as e:
+            log.warning(f"  {name} ({domain}): {e} — recording careers_url=none")
+            _mark_careers_none(tbl, company_id, name)
+            continue
+        except Exception as e:
+            log.warning(f"  {name} ({domain}): discovery failed ({e}) — recording careers_url=none")
+            _mark_careers_none(tbl, company_id, name)
             continue
 
-        # Detect ATS
-        resp = safe_get(careers_url, timeout=10)
-        ats_type = ats_slug = None
-        if resp:
-            ats_type, ats_slug, direct = detect_ats(resp.text, careers_url)
-            careers_url = direct or careers_url
+        if not careers_url:
+            log.debug(f"  No careers page: {name} ({domain})")
+            _mark_careers_none(tbl, company_id, name)
+            continue
 
         if not sb_patch(tbl, {"id": company_id}, {
             "careers_url": careers_url,
@@ -1207,149 +1483,201 @@ def scrape_jobs(table_key: str, company_id: Optional[int] = None, og_only: bool 
     total_matches = 0
     total_closed = 0
     unknown_locations = 0
+    skipped_jobs = 0
+    failed_companies = 0
 
     for co in rows:
-        name = co.get(name_col, "unknown")
+        name = co.get(name_col) or "unknown"
         careers_url = co.get("careers_url")
         if not careers_url:
             continue
 
-        jobs = get_jobs_for_company(co)
-        if not jobs:
-            log.warning(f"  {name}: 0 jobs returned (ATS: {co.get('ats_type') or 'generic'}, URL: {careers_url})")
-            _record_dead_board(tbl, co, name, careers_url)
-        else:
-            log.info(f"  {name}: {len(jobs)} total jobs found (ATS: {co.get('ats_type') or 'generic'})")
-        matches = 0
+        try:
+            jobs = run_with_company_cap(get_jobs_for_company, co)
+        except CompanyTimeCapExceeded as e:
+            # Leave careers_url alone so the next run can retry. A timeout is not
+            # a dead board and must not stall the rest of the queue.
+            failed_companies += 1
+            log.warning(f"  {name}: {e} — skipping company this run")
+            continue
+        except Exception as e:
+            failed_companies += 1
+            log.warning(f"  {name}: scrape failed ({type(e).__name__}: {e}) — skipping company this run")
+            continue
 
-        for job in jobs:
-            title = job.get("title", "").strip()
-            location = job.get("location", "").strip()
-            salary_text = job.get("salary_text", "").strip()
-            job_url = job.get("url", "").strip()
-
-            if not title_matches(title):
-                continue
-            if title_disqualified(title):
-                log.debug(f"  SKIP disqualified title: {title} at {name}")
-                continue
-            if not is_us_location(location):
-                continue
-            if not salary_qualifies(salary_text):
-                continue
-            if location_status(location) == "unknown":
-                unknown_locations += 1
-
-            # Check if job URL already exists
-            existing = sb_get(jobs_table, {"url": f"eq.{job_url}", "limit": "1"})
-            if existing:
-                update_payload = {
-                    "last_seen": now,
-                }
-                if table_key == "companies":
-                    update_payload["dna_fit"] = True
-
-                if not sb_patch(jobs_table, {"url": job_url}, update_payload):
-                    log_write_failure("PATCH", jobs_table, f"company={name} url={job_url}")
+        try:
+            if not jobs:
+                log.warning(f"  {name}: 0 jobs returned (ATS: {co.get('ats_type') or 'generic'}, URL: {careers_url})")
+                _record_dead_board(tbl, co, name, careers_url)
             else:
-                # Change 4: don't insert a brand-new job whose link is already dead.
-                if not url_is_live(job_url):
-                    log.info(f"  SKIP dead link: {title} at {name} ({job_url})")
-                    continue
-                if table_key == "vc":
-                    if not sb_insert(jobs_table, {
-                        "company_id": co.get("id"),
-                        "title": title,
-                        "url": job_url,
-                        "location": location,
-                        "salary_text": salary_text,
-                        "vc_names": co.get("vc_names"),
-                        "source": source,
-                        "first_seen": now,
-                        "last_seen": now,
-                        "active": True,
-                    }):
-                        log_write_failure("INSERT", jobs_table, f"company={name} title={title} url={job_url}")
-                else:
-                    if not sb_insert(jobs_table, {
-                        "company_id": co.get("id"),
-                        "company_name": name,
-                        "title": title,
-                        "url": job_url,
-                        "location": location,
-                        "salary_text": salary_text,
-                        "source": source,
-                        "first_seen": now,
-                        "last_seen": now,
-                        "dna_fit": True,
-                        "status": "new",
-                    }):
-                        log_write_failure("INSERT", jobs_table, f"company={name} title={title} url={job_url}")
-                log.info(f"  NEW: {title} at {name}")
+                log.info(f"  {name}: {len(jobs)} total jobs found (ATS: {co.get('ats_type') or 'generic'})")
+            matches = 0
+            company_job_errors = 0
 
-            if table_key == "vc":
-                existing_main = sb_get("jobs", {"url": f"eq.{job_url}", "limit": "1"})
-                if existing_main:
-                    if not sb_patch("jobs", {"url": job_url}, {"last_seen": now, "dna_fit": True}):
-                        log_write_failure("PATCH", "jobs", f"company={name} url={job_url}")
-                else:
-                    # Link the mirrored row to its `companies` record. Without
-                    # this the Roles UI cannot reach companies.dna_fit and the
-                    # job never appears, even at an approved company.
-                    linked_id = resolve_company_id(name, co.get("domain") or "")
-                    mirror = {
-                        "company_name": name,
-                        "title": title,
-                        "url": job_url,
-                        "source": source,
-                        "first_seen": now,
-                        "last_seen": now,
-                        "dna_fit": True,
-                        "status": "new",
-                    }
-                    if linked_id is not None:
-                        mirror["company_id"] = linked_id
+            for job in jobs:
+                try:
+                    if not isinstance(job, dict):
+                        raise TypeError(f"job record is {type(job).__name__}")
+                    title = _job_field(job.get("title"))
+                    location = _job_field(job.get("location"))
+                    salary_text = _job_field(job.get("salary_text"))
+                    job_url = _job_field(job.get("url"))
+
+                    if not title_matches(title):
+                        continue
+                    if title_disqualified(title):
+                        log.debug(f"  SKIP disqualified title: {title} at {name}")
+                        continue
+                    if not is_us_location(location):
+                        continue
+                    if not salary_qualifies(salary_text):
+                        continue
+                    if location_status(location) == "unknown":
+                        unknown_locations += 1
+
+                    # Check if job URL already exists
+                    existing = sb_get(jobs_table, {"url": f"eq.{job_url}", "limit": "1"})
+                    if existing:
+                        update_payload = {
+                            "last_seen": now,
+                        }
+                        if table_key == "companies":
+                            update_payload["dna_fit"] = True
+
+                        if not sb_patch(jobs_table, {"url": job_url}, update_payload):
+                            log_write_failure("PATCH", jobs_table, f"company={name} url={job_url}")
                     else:
-                        log.info(f"  UNLINKED: no unique companies row for {name}")
-                    if not sb_insert("jobs", mirror):
-                        log_write_failure("INSERT", "jobs", f"company={name} title={title} url={job_url}")
+                        # Change 4: don't insert a brand-new job whose link is already dead.
+                        if not url_is_live(job_url):
+                            log.info(f"  SKIP dead link: {title} at {name} ({job_url})")
+                            continue
+                        if table_key == "vc":
+                            if not sb_insert(jobs_table, {
+                                "company_id": co.get("id"),
+                                "title": title,
+                                "url": job_url,
+                                "location": location,
+                                "salary_text": salary_text,
+                                "vc_names": co.get("vc_names"),
+                                "source": source,
+                                "first_seen": now,
+                                "last_seen": now,
+                                "active": True,
+                            }):
+                                log_write_failure("INSERT", jobs_table, f"company={name} title={title} url={job_url}")
+                        else:
+                            if not sb_insert(jobs_table, {
+                                "company_id": co.get("id"),
+                                "company_name": name,
+                                "title": title,
+                                "url": job_url,
+                                "location": location,
+                                "salary_text": salary_text,
+                                "source": source,
+                                "first_seen": now,
+                                "last_seen": now,
+                                "dna_fit": True,
+                                "status": "new",
+                            }):
+                                log_write_failure("INSERT", jobs_table, f"company={name} title={title} url={job_url}")
+                        log.info(f"  NEW: {title} at {name}")
 
-            matches += 1
+                    if table_key == "vc":
+                        existing_main = sb_get("jobs", {"url": f"eq.{job_url}", "limit": "1"})
+                        if existing_main:
+                            if not sb_patch("jobs", {"url": job_url}, {"last_seen": now, "dna_fit": True}):
+                                log_write_failure("PATCH", "jobs", f"company={name} url={job_url}")
+                        else:
+                            # Link the mirrored row to its `companies` record. Without
+                            # this the Roles UI cannot reach companies.dna_fit and the
+                            # job never appears, even at an approved company.
+                            linked_id = resolve_company_id(name, co.get("domain") or "")
+                            mirror = {
+                                "company_name": name,
+                                "title": title,
+                                "url": job_url,
+                                "source": source,
+                                "first_seen": now,
+                                "last_seen": now,
+                                "dna_fit": True,
+                                "status": "new",
+                            }
+                            if linked_id is not None:
+                                mirror["company_id"] = linked_id
+                            else:
+                                log.info(f"  UNLINKED: no unique companies row for {name}")
+                            if not sb_insert("jobs", mirror):
+                                log_write_failure("INSERT", "jobs", f"company={name} title={title} url={job_url}")
 
-        # Update last_scraped on the company
-        if not sb_patch(tbl, {"id": co["id"]}, {"last_scraped": now}):
-            log_write_failure("PATCH", tbl, f"company={name} id={co['id']} last_scraped={now}")
+                    matches += 1
+                except Exception as e:
+                    company_job_errors += 1
+                    skipped_jobs += 1
+                    ident = job if isinstance(job, dict) else {}
+                    log.warning(
+                        f"  {name}: skipped job title={_job_field(ident.get('title'))!r} "
+                        f"url={_job_field(ident.get('url'))!r} ({type(e).__name__}: {e})",
+                        exc_info=True,
+                    )
 
-        # Stage 4 — stale-close: every job we re-saw this run had its last_seen bumped to
-        # `now`, so any still-open job for this company with an older last_seen has dropped
-        # off the board. Mark it closed. Guarded on a non-empty scrape (`jobs`) so a
-        # transient fetch failure (0 jobs returned) never wrongly closes live roles.
-        if jobs:
-            if table_key == "vc":
-                n_closed = sb_patch_where(
-                    jobs_table,
-                    {"company_id": f"eq.{co['id']}", "last_seen": f"lt.{now}", "active": "eq.true"},
-                    {"active": False},
+            # Update last_scraped on the company
+            if not sb_patch(tbl, {"id": co["id"]}, {"last_scraped": now}):
+                log_write_failure("PATCH", tbl, f"company={name} id={co['id']} last_scraped={now}")
+
+            # Stage 4 — stale-close: every job we re-saw this run had its last_seen bumped to
+            # `now`, so any still-open job for this company with an older last_seen has dropped
+            # off the board. Mark it closed. Guarded on a non-empty scrape (`jobs`) so a
+            # transient fetch failure (0 jobs returned) never wrongly closes live roles.
+            # Also skipped when a posting raised: that row was not re-seen, and closing it
+            # would drop a role that is still on the board.
+            if jobs and not company_job_errors:
+                if table_key == "vc":
+                    n_closed = sb_patch_where(
+                        jobs_table,
+                        {"company_id": f"eq.{co['id']}", "last_seen": f"lt.{now}", "active": "eq.true"},
+                        {"active": False},
+                    )
+                else:
+                    n_closed = sb_patch_where(
+                        jobs_table,
+                        {"company_id": f"eq.{co['id']}", "last_seen": f"lt.{now}", "status": "in.(new,active)"},
+                        {"status": "closed"},
+                    )
+                if n_closed < 0:
+                    log_write_failure("PATCH", jobs_table, f"stale-close company={name} id={co['id']}")
+                elif n_closed:
+                    total_closed += n_closed
+                    log.info(f"  {name}: closed {n_closed} stale job(s) no longer on the board")
+            elif company_job_errors:
+                log.warning(
+                    f"  {name}: not closing stale jobs; {company_job_errors} posting(s) failed to process"
                 )
-            else:
-                n_closed = sb_patch_where(
-                    jobs_table,
-                    {"company_id": f"eq.{co['id']}", "last_seen": f"lt.{now}", "status": "in.(new,active)"},
-                    {"status": "closed"},
-                )
-            if n_closed < 0:
-                log_write_failure("PATCH", jobs_table, f"stale-close company={name} id={co['id']}")
-            elif n_closed:
-                total_closed += n_closed
-                log.info(f"  {name}: closed {n_closed} stale job(s) no longer on the board")
 
-        if matches:
-            log.info(f"  {name}: {matches} matching job(s)")
-        total_matches += matches
-        time.sleep(0.5)
+            if matches:
+                log.info(f"  {name}: {matches} matching job(s)")
+            total_matches += matches
+            time.sleep(0.5)
+        except Exception as e:
+            failed_companies += 1
+            log.warning(f"  {name}: company scrape failed ({type(e).__name__}: {e}) — continuing")
 
-    log.info(f"[{tbl}] Scraping complete. {total_matches} total matching jobs across {len(rows)} companies. {total_closed} stale job(s) closed.")
+    summary = (
+        f"[{tbl}] Scraping complete. {total_matches} total matching jobs across {len(rows)} companies. "
+        f"{total_closed} stale job(s) closed. {skipped_jobs} job(s) skipped after an error. "
+        f"{failed_companies} company scrape(s) failed."
+    )
+    log.info(summary)
     log.info(f"Locations unparsed on {unknown_locations} matching posting(s) — these bypass the US filter")
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary_path:
+        try:
+            with open(summary_path, "a", encoding="utf-8") as fh:
+                fh.write(f"\n{summary}\n")
+                fh.write(
+                    f"Locations unparsed on {unknown_locations} matching posting(s).\n"
+                )
+        except Exception as e:
+            log.debug(f"Could not write GitHub summary: {e}")
 
 
 # ----------------------------------------------------------------
