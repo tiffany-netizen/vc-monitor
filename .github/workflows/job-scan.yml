@@ -63,6 +63,15 @@ jobs:
             python job_scraper.py --table companies $OG_FLAG $MODE_FLAG
           fi
 
+      # Runs when the scraper step itself fails, or when this job is cancelled
+      # and the runner still evaluates later steps. A job-level timeout-minutes
+      # cancel often skips these steps; report-failure below covers that case.
+      - name: Report scraper failure or cancellation
+        if: failure() || cancelled()
+        run: |
+          echo "::error title=GT Job Scraper failed or cancelled::The scraper step failed or was cancelled. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          exit 1
+
       # Fires once, after both tables are scraped: company enrich (S10) -> contact
       # enrich (4657611) in Make. No-op unless MAKE_API_KEY secret is set and both
       # scenarios are active. Skipped for discover-only runs.
@@ -71,3 +80,33 @@ jobs:
         env:
           MAKE_API_KEY: ${{ secrets.MAKE_API_KEY }}
         run: python job_scraper.py --chain-enrich
+
+  # Job timeout cancels `scrape` without running its later steps. This job still
+  # starts, because a timed-out job's result is `cancelled` and always() is true.
+  report-failure:
+    needs: scrape
+    if: ${{ always() && (needs.scrape.result == 'failure' || needs.scrape.result == 'cancelled') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report scrape failure or cancellation
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          JOB_RESULT: ${{ needs.scrape.result }}
+        run: |
+          MSG="GT Job Scraper ${JOB_RESULT}. Careers discovery or scrape did not finish (a hung company used to sit on a blank Playwright frame until the Actions timeout). Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          echo "::error title=GT Job Scraper ${JOB_RESULT}::${MSG}"
+          {
+            echo "## GT Job Scraper ${JOB_RESULT}"
+            echo ""
+            echo "$MSG"
+            echo ""
+            echo "This annotation fires when the scrape job fails or is cancelled, including the Actions job timeout."
+            echo "To also post to Slack, add a repository secret named \`SLACK_WEBHOOK_URL\` (incoming webhook). This job POSTs to it when that secret is set."
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
+            payload=$(python3 -c 'import json,sys; print(json.dumps({"text": sys.argv[1]}))' "$MSG")
+            curl -fsS -X POST -H 'Content-type: application/json' --data "$payload" "$SLACK_WEBHOOK_URL" \
+              || echo "::warning::Slack webhook post failed"
+          fi
+          exit 1

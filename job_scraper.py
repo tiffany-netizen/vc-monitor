@@ -28,6 +28,8 @@ import json
 import logging
 import os
 import re
+import signal
+import threading
 import time
 from datetime import UTC, datetime
 from typing import Optional
@@ -936,29 +938,201 @@ def _extract_jobs_from_soup(soup: BeautifulSoup, careers_url: str) -> list[dict]
     return jobs
 
 
+# One company must not be able to stall discover or scrape until the Actions
+# job timeout. 90s covers the static probes plus the Playwright fallback.
+# find_careers_url / get_jobs_for_company run on a daemon thread; on expiry the
+# parent stops waiting and SIGKILLs Playwright/Chromium descendants so a stuck
+# frame.content() cannot pin the run.
+COMPANY_TIME_CAP_SECONDS = 90
+_CAP_GRACE_SECONDS = 1
+_BROWSER_PROC_MARKERS = ("playwright", "chrom", "headless_shell")
+
+
+class CompanyTimeCapExceeded(Exception):
+    """Raised when one company's discover or scrape lookup exceeds the cap."""
+
+
+def _descendant_pids(root: int) -> list[int]:
+    children: dict[int, list[int]] = {}
+    try:
+        entries = os.listdir("/proc")
+    except OSError:
+        return []
+    for entry in entries:
+        if not entry.isdigit():
+            continue
+        pid = int(entry)
+        try:
+            with open(f"/proc/{pid}/stat", encoding="utf-8", errors="replace") as fh:
+                stat = fh.read()
+        except OSError:
+            continue
+        rparen = stat.rfind(")")
+        if rparen < 0:
+            continue
+        parts = stat[rparen + 2:].split()
+        if len(parts) < 2:
+            continue
+        try:
+            ppid = int(parts[1])
+        except ValueError:
+            continue
+        children.setdefault(ppid, []).append(pid)
+    ordered: list[int] = []
+    stack = list(children.get(root, []))
+    while stack:
+        pid = stack.pop()
+        ordered.append(pid)
+        stack.extend(children.get(pid, []))
+    return ordered
+
+
+def _proc_cmdline(pid: int) -> str:
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as fh:
+            raw = fh.read()
+    except OSError:
+        return ""
+    return raw.replace(b"\x00", b" ").decode("utf-8", "replace").lower()
+
+
+def _kill_browser_descendants() -> None:
+    """SIGKILL this process's Playwright driver and Chromium children.
+
+    frame.content() blocks in the driver with no timeout of its own. Killing
+    those descendants is what lets the capped call actually end. The scraper
+    process and unrelated children are left alone.
+    """
+    if not os.path.isdir("/proc"):
+        return
+    for pid in _descendant_pids(os.getpid()):
+        cmd = _proc_cmdline(pid)
+        if not cmd or not any(marker in cmd for marker in _BROWSER_PROC_MARKERS):
+            continue
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+
+
+def run_with_company_cap(fn, *args, timeout: float | None = None):
+    """Run fn(*args) and give up after `timeout` seconds (default: the per-company cap).
+
+    The callable runs on a daemon thread so a hung Playwright call cannot freeze
+    the pipeline. Monkeypatches in this process still apply. A late return after
+    the cap is ignored — the company already used its budget.
+    """
+    if timeout is None:
+        timeout = COMPANY_TIME_CAP_SECONDS
+    box: dict = {}
+
+    def _target():
+        try:
+            box["value"] = fn(*args)
+        except Exception as exc:
+            box["error"] = exc
+
+    thread = threading.Thread(
+        target=_target,
+        name=f"company-cap-{getattr(fn, '__name__', 'step')}",
+        daemon=True,
+    )
+    thread.start()
+    thread.join(timeout)
+    if thread.is_alive():
+        _kill_browser_descendants()
+        thread.join(_CAP_GRACE_SECONDS)
+        raise CompanyTimeCapExceeded(f"exceeded the {timeout:g}s per-company cap")
+    if "error" in box:
+        raise box["error"]
+    if "value" not in box:
+        raise RuntimeError(f"{getattr(fn, '__name__', 'company step')} finished without a result")
+    return box["value"]
+
+
+def _frame_url(frame) -> str:
+    try:
+        return (frame.url or "").strip()
+    except Exception:
+        return ""
+
+
+def _skip_unreadable_frame(frame, main_frame) -> bool:
+    """Skip child frames whose document will never commit.
+
+    Playwright's frame.content() waits until the frame has a document and does
+    not apply a timeout. A blank or hidden child — on justswish.in, a YouTube
+    iframe that stays at about:blank — blocks the whole discovery run. The main
+    frame is always read. Embedded job boards (a real https URL, still visible)
+    are kept; visibility failures fail open so a flaky is_visible() cannot drop
+    a board that lives in an iframe.
+    """
+    try:
+        if frame.is_detached():
+            return True
+    except Exception:
+        return True
+    if frame == main_frame or getattr(frame, "parent_frame", None) is None:
+        return False
+    url = _frame_url(frame)
+    if not url or url.startswith("about:"):
+        return True
+    try:
+        handle = frame.frame_element()
+        if handle is None or not handle.is_visible():
+            return True
+    except Exception:
+        return False
+    return False
+
+
+def _html_from_frames(frames, main_frame) -> list[str]:
+    """HTML of the main frame and readable child frames. Blank/hidden frames are skipped."""
+    htmls = []
+    skipped = []
+    for frame in frames:
+        if _skip_unreadable_frame(frame, main_frame):
+            skipped.append(_frame_url(frame) or "(no url)")
+            continue
+        try:
+            htmls.append(frame.content())
+        except Exception:
+            continue
+    if skipped:
+        log.info(f"  skipped {len(skipped)} blank/hidden frame(s): {skipped[:5]}")
+    return htmls
+
+
 def _render_careers_page(careers_url: str) -> list[str]:
     """Render a JS-heavy careers page headless. Returns HTML of the page and
-    every iframe (embedded boards live in iframes, not the main document)."""
+    every readable iframe (embedded boards live in iframes, not the main document).
+
+    Blank, detached, and hidden child frames are not read — see _skip_unreadable_frame.
+    """
     from playwright.sync_api import sync_playwright
-    htmls = []
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
-        # skip heavy assets so renders stay fast
-        page.route("**/*", lambda route: route.abort()
-                   if route.request.resource_type in ("image", "media", "font")
-                   else route.continue_())
-        # networkidle flakes on pages with analytics beacons; a fixed settle
-        # wait after DOM load is what reliably surfaces client-rendered boards
-        page.goto(careers_url, wait_until="domcontentloaded", timeout=30000)
-        page.wait_for_timeout(4000)
-        for frame in page.frames:
+        try:
+            page = browser.new_page()
+            # Bound ordinary Playwright ops. frame.content() on a frame that never
+            # commits still ignores this (that case is filtered above); the
+            # per-company cap is the backstop if a readable frame hangs anyway.
+            page.set_default_timeout(20_000)
+            page.set_default_navigation_timeout(30_000)
+            # skip heavy assets so renders stay fast
+            page.route("**/*", lambda route: route.abort()
+                       if route.request.resource_type in ("image", "media", "font")
+                       else route.continue_())
+            # networkidle flakes on pages with analytics beacons; a fixed settle
+            # wait after DOM load is what reliably surfaces client-rendered boards
+            page.goto(careers_url, wait_until="domcontentloaded", timeout=30000)
+            page.wait_for_timeout(4000)
+            return _html_from_frames(page.frames, page.main_frame)
+        finally:
             try:
-                htmls.append(frame.content())
+                browser.close()
             except Exception:
-                continue
-        browser.close()
-    return htmls
+                pass
 
 
 def scrape_generic(careers_url: str) -> list[dict]:
@@ -1111,6 +1285,33 @@ def extract_domain(website: str) -> Optional[str]:
         return None
 
 
+def _mark_careers_none(tbl: str, company_id, name: str) -> None:
+    """Record a finished discovery miss so the company leaves the queue.
+
+    `careers_url='none'` is the sentinel discover already writes when no page is
+    found (`careers_url IS NULL` is the queue). ats fields are cleared so a
+    failed or timed-out attempt cannot leave a partial board behind.
+    """
+    if not sb_patch(tbl, {"id": company_id}, {
+        "careers_url": "none",
+        "ats_type": None,
+        "ats_slug": None,
+    }):
+        log_write_failure("PATCH", tbl, f"company={name} id={company_id} careers_url=none")
+
+
+def _discover_company_careers(domain: str):
+    """Return (careers_url, ats_type, ats_slug). No database writes."""
+    careers_url = find_careers_url(domain)
+    ats_type = ats_slug = None
+    if careers_url:
+        resp = safe_get(careers_url, timeout=10)
+        if resp:
+            ats_type, ats_slug, direct = detect_ats(resp.text, careers_url)
+            careers_url = direct or careers_url
+    return careers_url, ats_type, ats_slug
+
+
 def discover_careers(table_key: str, og_only: bool = False):
     """Find careers pages for companies that don't have one yet."""
     cfg = TABLE_CONFIG[table_key]
@@ -1144,19 +1345,23 @@ def discover_careers(table_key: str, og_only: bool = False):
         if not domain:
             continue
 
-        careers_url = find_careers_url(domain)
-        if not careers_url:
-            log.debug(f"  No careers page: {name} ({domain})")
-            if not sb_patch(tbl, {"id": company_id}, {"careers_url": "none"}):
-                log_write_failure("PATCH", tbl, f"company={name} id={company_id} careers_url=none")
+        try:
+            careers_url, ats_type, ats_slug = run_with_company_cap(
+                _discover_company_careers, domain
+            )
+        except CompanyTimeCapExceeded as e:
+            log.warning(f"  {name} ({domain}): {e} — recording careers_url=none")
+            _mark_careers_none(tbl, company_id, name)
+            continue
+        except Exception as e:
+            log.warning(f"  {name} ({domain}): discovery failed ({e}) — recording careers_url=none")
+            _mark_careers_none(tbl, company_id, name)
             continue
 
-        # Detect ATS
-        resp = safe_get(careers_url, timeout=10)
-        ats_type = ats_slug = None
-        if resp:
-            ats_type, ats_slug, direct = detect_ats(resp.text, careers_url)
-            careers_url = direct or careers_url
+        if not careers_url:
+            log.debug(f"  No careers page: {name} ({domain})")
+            _mark_careers_none(tbl, company_id, name)
+            continue
 
         if not sb_patch(tbl, {"id": company_id}, {
             "careers_url": careers_url,
@@ -1214,7 +1419,13 @@ def scrape_jobs(table_key: str, company_id: Optional[int] = None, og_only: bool 
         if not careers_url:
             continue
 
-        jobs = get_jobs_for_company(co)
+        try:
+            jobs = run_with_company_cap(get_jobs_for_company, co)
+        except CompanyTimeCapExceeded as e:
+            # Leave careers_url alone so the next run can retry. A timeout is not
+            # a dead board and must not stall the rest of the queue.
+            log.warning(f"  {name}: {e} — skipping company this run")
+            continue
         if not jobs:
             log.warning(f"  {name}: 0 jobs returned (ATS: {co.get('ats_type') or 'generic'}, URL: {careers_url})")
             _record_dead_board(tbl, co, name, careers_url)
